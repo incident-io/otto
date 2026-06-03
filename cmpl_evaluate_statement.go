@@ -4,8 +4,8 @@ import (
 	"fmt"
 	goruntime "runtime"
 
-	"github.com/robertkrimen/otto/file"
-	"github.com/robertkrimen/otto/token"
+	"github.com/incident-io/otto/file"
+	"github.com/incident-io/otto/token"
 )
 
 func (rt *runtime) cmplEvaluateNodeStatement(node nodeStatement) Value {
