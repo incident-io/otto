@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/underscore"
+	"github.com/robertkrimen/otto/ast"
+	"github.com/robertkrimen/otto/file"
+	"github.com/robertkrimen/otto/underscore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,9 +60,8 @@ func TestParseFile(t *testing.T) {
 		_, err = ParseFile(nil, "", `/(?!def)abc/; return`, IgnoreRegExpErrors)
 		is(err, "(anonymous): Line 1:15 Illegal return statement")
 
-		// `..` begins an (incomplete) ellipsis, so it lexes as an illegal token.
 		_, err = ParseFile(nil, "/make-sure-file-path-is-returned-not-anonymous", `a..`, 0)
-		is(err, "/make-sure-file-path-is-returned-not-anonymous: Line 1:2 Unexpected token ILLEGAL (and 1 more errors)")
+		is(err, "/make-sure-file-path-is-returned-not-anonymous: Line 1:3 Unexpected token .")
 	})
 }
 
@@ -240,7 +239,7 @@ func TestParserErr(t *testing.T) {
 
 		test("a if", "(anonymous): Line 1:3 Unexpected token if")
 
-		test("a class", "(anonymous): Line 1:3 Unexpected token class")
+		test("a class", "(anonymous): Line 1:3 Unexpected reserved word")
 
 		test("break\n", "(anonymous): Line 1:1 Illegal break statement")
 
@@ -393,7 +392,7 @@ func TestParserErr(t *testing.T) {
 
 		test("/\\1/.source", "(anonymous): Line 1:1 Invalid regular expression: re2: Invalid \\1 <backreference>")
 
-		test("var class", "(anonymous): Line 1:5 Unexpected token class")
+		test("var class", "(anonymous): Line 1:5 Unexpected reserved word")
 
 		test("var if", "(anonymous): Line 1:5 Unexpected token if")
 
@@ -426,14 +425,13 @@ func TestParserErr(t *testing.T) {
 		}
 
 		{ // Reserved words
-			test("class", "(anonymous): Line 1:6 Unexpected end of input")
+			test("class", "(anonymous): Line 1:1 Unexpected reserved word")
 			test("abc.class = 1", nil)
-			test("var class;", "(anonymous): Line 1:5 Unexpected token class")
+			test("var class;", "(anonymous): Line 1:5 Unexpected reserved word")
 
-			// const is now a declaration keyword rather than a reserved word.
-			test("const", "(anonymous): Line 1:6 Unexpected end of input")
+			test("const", "(anonymous): Line 1:1 Unexpected reserved word")
 			test("abc.const = 1", nil)
-			test("var const;", "(anonymous): Line 1:5 Unexpected token const")
+			test("var const;", "(anonymous): Line 1:5 Unexpected reserved word")
 
 			test("enum", "(anonymous): Line 1:1 Unexpected reserved word")
 			test("abc.enum = 1", nil)
@@ -443,17 +441,17 @@ func TestParserErr(t *testing.T) {
 			test("abc.export = 1", nil)
 			test("var export;", "(anonymous): Line 1:5 Unexpected reserved word")
 
-			test("extends", "(anonymous): Line 1:1 Unexpected token extends")
+			test("extends", "(anonymous): Line 1:1 Unexpected reserved word")
 			test("abc.extends = 1", nil)
-			test("var extends;", "(anonymous): Line 1:5 Unexpected token extends")
+			test("var extends;", "(anonymous): Line 1:5 Unexpected reserved word")
 
 			test("import", "(anonymous): Line 1:1 Unexpected reserved word")
 			test("abc.import = 1", nil)
 			test("var import;", "(anonymous): Line 1:5 Unexpected reserved word")
 
-			test("super", nil)
+			test("super", "(anonymous): Line 1:1 Unexpected reserved word")
 			test("abc.super = 1", nil)
-			test("var super;", "(anonymous): Line 1:5 Unexpected token super")
+			test("var super;", "(anonymous): Line 1:5 Unexpected reserved word")
 		}
 
 		{ // Reserved words (strict)
@@ -465,10 +463,9 @@ func TestParserErr(t *testing.T) {
 			test(`abc.interface = 1`, nil)
 			test(`var interface;`, nil)
 
-			// let is now a declaration keyword rather than an identifier.
-			test(`let`, "(anonymous): Line 1:4 Unexpected end of input")
+			test(`let`, nil)
 			test(`abc.let = 1`, nil)
-			test(`var let;`, "(anonymous): Line 1:5 Unexpected token let")
+			test(`var let;`, nil)
 
 			test(`package`, nil)
 			test(`abc.package = 1`, nil)

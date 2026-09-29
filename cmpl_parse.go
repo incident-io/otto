@@ -3,9 +3,9 @@ package otto
 import (
 	"fmt"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/token"
+	"github.com/robertkrimen/otto/ast"
+	"github.com/robertkrimen/otto/file"
+	"github.com/robertkrimen/otto/token"
 )
 
 var (
@@ -91,32 +91,16 @@ func (cmpl *compiler) parseExpression(expr ast.Expression) nodeExpression {
 			name = expr.Name.Name
 		}
 		out := &nodeFunctionLiteral{
-			name:    name,
-			body:    cmpl.parseStatement(expr.Body),
-			source:  expr.Source,
-			file:    cmpl.file,
-			isArrow: expr.IsArrow,
+			name:   name,
+			body:   cmpl.parseStatement(expr.Body),
+			source: expr.Source,
+			file:   cmpl.file,
 		}
 		if expr.ParameterList != nil {
 			list := expr.ParameterList.List
 			out.parameterList = make([]string, len(list))
 			for i, value := range list {
 				out.parameterList[i] = value.Name
-			}
-			if expr.ParameterList.Defaults != nil {
-				out.parameterDefaults = make([]nodeExpression, len(list))
-				for i, def := range expr.ParameterList.Defaults {
-					out.parameterDefaults[i] = cmpl.parseExpression(def)
-				}
-			}
-			if expr.ParameterList.Targets != nil {
-				out.parameterTargets = make([]nodeExpression, len(list))
-				for i, target := range expr.ParameterList.Targets {
-					out.parameterTargets[i] = cmpl.parseExpression(target)
-				}
-			}
-			if expr.ParameterList.Rest != nil {
-				out.restParameter = expr.ParameterList.Rest.Name
 			}
 		}
 		for _, value := range expr.DeclarationList {
@@ -125,11 +109,7 @@ func (cmpl *compiler) parseExpression(expr ast.Expression) nodeExpression {
 				out.functionList = append(out.functionList, cmpl.parseExpression(value.Function).(*nodeFunctionLiteral))
 			case *ast.VariableDeclaration:
 				for _, value := range value.List {
-					if value.Target != nil {
-						out.varList = append(out.varList, astPatternNames(value.Target)...)
-					} else {
-						out.varList = append(out.varList, value.Name)
-					}
+					out.varList = append(out.varList, value.Name)
 				}
 			default:
 				panic(fmt.Sprintf("parse expression unknown function declaration type %T", value))
@@ -167,10 +147,9 @@ func (cmpl *compiler) parseExpression(expr ast.Expression) nodeExpression {
 		}
 		for i, value := range expr.Value {
 			out.value[i] = nodeProperty{
-				key:           value.Key,
-				kind:          value.Kind,
-				value:         cmpl.parseExpression(value.Value),
-				keyExpression: cmpl.parseExpression(value.KeyExpression),
+				key:   value.Key,
+				kind:  value.Kind,
+				value: cmpl.parseExpression(value.Value),
 			}
 		}
 		return out
@@ -195,63 +174,6 @@ func (cmpl *compiler) parseExpression(expr ast.Expression) nodeExpression {
 			value: stringValue(expr.Value),
 		}
 
-	case *ast.TemplateLiteral:
-		out := &nodeTemplateLiteral{
-			strings:     expr.Strings,
-			expressions: make([]nodeExpression, len(expr.Expressions)),
-		}
-		for i, value := range expr.Expressions {
-			out.expressions[i] = cmpl.parseExpression(value)
-		}
-		return out
-
-	case *ast.SpreadExpression:
-		return &nodeSpreadExpression{
-			value: cmpl.parseExpression(expr.Value),
-		}
-
-	case *ast.SuperExpression:
-		return &nodeSuperExpression{}
-
-	case *ast.TaggedTemplateExpression:
-		out := &nodeTaggedTemplate{
-			tag:         cmpl.parseExpression(expr.Tag),
-			quasis:      expr.Template.Strings,
-			raw:         expr.Template.Raw,
-			expressions: make([]nodeExpression, len(expr.Template.Expressions)),
-		}
-		for i, value := range expr.Template.Expressions {
-			out.expressions[i] = cmpl.parseExpression(value)
-		}
-		return out
-
-	case *ast.ClassLiteral:
-		return cmpl.parseClassLiteral(expr)
-
-	case *ast.ArrayPattern:
-		out := &nodeArrayPattern{
-			elements: make([]nodeExpression, len(expr.Elements)),
-			rest:     cmpl.parseExpression(expr.Rest),
-		}
-		for i, element := range expr.Elements {
-			out.elements[i] = cmpl.parseExpression(element)
-		}
-		return out
-
-	case *ast.ObjectPattern:
-		out := &nodeObjectPattern{
-			properties: make([]nodeObjectPatternProperty, len(expr.Properties)),
-			rest:       cmpl.parseExpression(expr.Rest),
-		}
-		for i, prop := range expr.Properties {
-			out.properties[i] = nodeObjectPatternProperty{
-				key:     prop.Key,
-				keyExpr: cmpl.parseExpression(prop.KeyExpression),
-				target:  cmpl.parseExpression(prop.Target),
-			}
-		}
-		return out
-
 	case *ast.ThisExpression:
 		return &nodeThisExpression{}
 
@@ -267,111 +189,10 @@ func (cmpl *compiler) parseExpression(expr ast.Expression) nodeExpression {
 			idx:         expr.Idx0(),
 			name:        expr.Name,
 			initializer: cmpl.parseExpression(expr.Initializer),
-			target:      cmpl.parseExpression(expr.Target),
 		}
 	default:
 		panic(fmt.Errorf("parse expression unknown node type %T", expr))
 	}
-}
-
-// parseLoopBody compiles a loop body, flattening a plain block into its
-// statement list (as before) but preserving a block that introduces lexical
-// (let/const) declarations so that each iteration gets a fresh environment.
-func (cmpl *compiler) parseLoopBody(body ast.Statement) []nodeStatement {
-	node := cmpl.parseStatement(body)
-	if block, ok := node.(*nodeBlockStatement); ok && !block.lexical {
-		return block.list
-	}
-	return []nodeStatement{node}
-}
-
-// containsLexicalDeclaration reports whether the statement list directly
-// contains a let/const or class declaration, in which case the enclosing block
-// needs a lexical environment record.
-func containsLexicalDeclaration(list []ast.Statement) bool {
-	for _, stmt := range list {
-		switch stmt.(type) {
-		case *ast.LexicalDeclaration, *ast.ClassLiteral:
-			return true
-		}
-	}
-	return false
-}
-
-func classLiteralName(class *ast.ClassLiteral) string {
-	if class.Name != nil {
-		return class.Name.Name
-	}
-	return ""
-}
-
-func (cmpl *compiler) parseClassLiteral(expr *ast.ClassLiteral) *nodeClassLiteral {
-	out := &nodeClassLiteral{
-		name:       classLiteralName(expr),
-		superClass: cmpl.parseExpression(expr.SuperClass),
-		source:     expr.Source,
-		elements:   make([]nodeClassElement, len(expr.Body)),
-	}
-	for i, element := range expr.Body {
-		out.elements[i] = nodeClassElement{
-			kind:    element.Kind,
-			static:  element.Static,
-			key:     element.Key,
-			keyExpr: cmpl.parseExpression(element.KeyExpression),
-			method:  cmpl.parseExpression(element.Method).(*nodeFunctionLiteral),
-		}
-	}
-	return out
-}
-
-// astPatternNames returns all identifier names bound by a destructuring
-// binding pattern, used to hoist var-declared pattern bindings.
-func astPatternNames(target ast.Expression) []string {
-	var names []string
-	var walk func(ast.Expression)
-	walk = func(e ast.Expression) {
-		switch t := e.(type) {
-		case *ast.Identifier:
-			names = append(names, t.Name)
-		case *ast.AssignExpression:
-			walk(t.Left)
-		case *ast.ArrayPattern:
-			for _, element := range t.Elements {
-				if element != nil {
-					walk(element)
-				}
-			}
-			if t.Rest != nil {
-				walk(t.Rest)
-			}
-		case *ast.ObjectPattern:
-			for _, prop := range t.Properties {
-				walk(prop.Target)
-			}
-			if t.Rest != nil {
-				walk(t.Rest)
-			}
-		}
-	}
-	walk(target)
-	return names
-}
-
-// lexicalBindingNames extracts the names declared by a for-loop's lexical
-// initializer (a sequence of variable expressions).
-func lexicalBindingNames(initializer ast.Expression) []string {
-	var names []string
-	switch init := initializer.(type) {
-	case *ast.SequenceExpression:
-		for _, item := range init.Sequence {
-			if ve, ok := item.(*ast.VariableExpression); ok {
-				names = append(names, ve.Name)
-			}
-		}
-	case *ast.VariableExpression:
-		names = append(names, init.Name)
-	}
-	return names
 }
 
 func (cmpl *compiler) parseStatement(stmt ast.Statement) nodeStatement {
@@ -382,36 +203,10 @@ func (cmpl *compiler) parseStatement(stmt ast.Statement) nodeStatement {
 	switch stmt := stmt.(type) {
 	case *ast.BlockStatement:
 		out := &nodeBlockStatement{
-			list:    make([]nodeStatement, len(stmt.List)),
-			lexical: containsLexicalDeclaration(stmt.List),
+			list: make([]nodeStatement, len(stmt.List)),
 		}
 		for i, value := range stmt.List {
 			out.list[i] = cmpl.parseStatement(value)
-		}
-		return out
-
-	case *ast.ClassLiteral:
-		return &nodeClassStatement{
-			name:  classLiteralName(stmt),
-			class: cmpl.parseClassLiteral(stmt),
-		}
-
-	case *ast.LexicalDeclaration:
-		out := &nodeLexicalDeclaration{
-			immutable: stmt.Token == token.CONST,
-			bindings:  make([]nodeLexicalBinding, len(stmt.List)),
-		}
-		for i, value := range stmt.List {
-			ve := value.(*ast.VariableExpression)
-			binding := nodeLexicalBinding{
-				name:   ve.Name,
-				target: cmpl.parseExpression(ve.Target),
-			}
-			if ve.Initializer != nil {
-				binding.initializer = cmpl.parseExpression(ve.Initializer)
-				binding.hasValue = true
-			}
-			out.bindings[i] = binding
 		}
 		return out
 
@@ -431,7 +226,12 @@ func (cmpl *compiler) parseStatement(stmt ast.Statement) nodeStatement {
 		out := &nodeDoWhileStatement{
 			test: cmpl.parseExpression(stmt.Test),
 		}
-		out.body = cmpl.parseLoopBody(stmt.Body)
+		body := cmpl.parseStatement(stmt.Body)
+		if block, ok := body.(*nodeBlockStatement); ok {
+			out.body = block.list
+		} else {
+			out.body = append(out.body, body)
+		}
 		return out
 
 	case *ast.EmptyStatement:
@@ -447,12 +247,12 @@ func (cmpl *compiler) parseStatement(stmt ast.Statement) nodeStatement {
 			into:   cmpl.parseExpression(stmt.Into),
 			source: cmpl.parseExpression(stmt.Source),
 		}
-		out.of = stmt.Of
-		if stmt.Lexical != 0 {
-			out.lexical = true
-			out.immutable = stmt.Lexical == token.CONST
+		body := cmpl.parseStatement(stmt.Body)
+		if block, ok := body.(*nodeBlockStatement); ok {
+			out.body = block.list
+		} else {
+			out.body = append(out.body, body)
 		}
-		out.body = cmpl.parseLoopBody(stmt.Body)
 		return out
 
 	case *ast.ForStatement:
@@ -461,11 +261,12 @@ func (cmpl *compiler) parseStatement(stmt ast.Statement) nodeStatement {
 			update:      cmpl.parseExpression(stmt.Update),
 			test:        cmpl.parseExpression(stmt.Test),
 		}
-		if stmt.Lexical != 0 {
-			out.lexicalBindings = lexicalBindingNames(stmt.Initializer)
-			out.immutable = stmt.Lexical == token.CONST
+		body := cmpl.parseStatement(stmt.Body)
+		if block, ok := body.(*nodeBlockStatement); ok {
+			out.body = block.list
+		} else {
+			out.body = append(out.body, body)
 		}
-		out.body = cmpl.parseLoopBody(stmt.Body)
 		return out
 
 	case *ast.FunctionStatement:
@@ -537,7 +338,12 @@ func (cmpl *compiler) parseStatement(stmt ast.Statement) nodeStatement {
 		out := &nodeWhileStatement{
 			test: cmpl.parseExpression(stmt.Test),
 		}
-		out.body = cmpl.parseLoopBody(stmt.Body)
+		body := cmpl.parseStatement(stmt.Body)
+		if block, ok := body.(*nodeBlockStatement); ok {
+			out.body = block.list
+		} else {
+			out.body = append(out.body, body)
+		}
 		return out
 
 	case *ast.WithStatement:
@@ -563,9 +369,8 @@ func cmplParse(in *ast.Program) *nodeProgram {
 
 func (cmpl *compiler) parse() *nodeProgram {
 	out := &nodeProgram{
-		body:    make([]nodeStatement, len(cmpl.program.Body)),
-		file:    cmpl.program.File,
-		lexical: containsLexicalDeclaration(cmpl.program.Body),
+		body: make([]nodeStatement, len(cmpl.program.Body)),
+		file: cmpl.program.File,
 	}
 	for i, value := range cmpl.program.Body {
 		out.body[i] = cmpl.parseStatement(value)
@@ -590,7 +395,6 @@ type nodeProgram struct {
 	body         []nodeStatement
 	varList      []string
 	functionList []*nodeFunctionLiteral
-	lexical      bool // contains top-level let/const declarations
 }
 
 type node interface{}
@@ -642,17 +446,13 @@ type (
 	}
 
 	nodeFunctionLiteral struct {
-		body              nodeStatement
-		file              *file.File
-		name              string
-		source            string
-		parameterList     []string
-		parameterDefaults []nodeExpression // parallel to parameterList; nil if none
-		parameterTargets  []nodeExpression // parallel to parameterList; pattern params
-		restParameter     string           // name of the rest parameter, or ""
-		varList           []string
-		functionList      []*nodeFunctionLiteral
-		isArrow           bool
+		body          nodeStatement
+		file          *file.File
+		name          string
+		source        string
+		parameterList []string
+		varList       []string
+		functionList  []*nodeFunctionLiteral
 	}
 
 	nodeIdentifier struct {
@@ -674,10 +474,9 @@ type (
 	}
 
 	nodeProperty struct {
-		value         nodeExpression
-		keyExpression nodeExpression
-		key           string
-		kind          string
+		value nodeExpression
+		key   string
+		kind  string
 	}
 
 	nodeRegExpLiteral struct {
@@ -687,55 +486,6 @@ type (
 
 	nodeSequenceExpression struct {
 		sequence []nodeExpression
-	}
-
-	nodeSpreadExpression struct {
-		value nodeExpression
-	}
-
-	nodeArrayPattern struct {
-		rest     nodeExpression
-		elements []nodeExpression
-	}
-
-	nodeSuperExpression struct{}
-
-	nodeClassLiteral struct {
-		superClass nodeExpression
-		name       string
-		source     string
-		elements   []nodeClassElement
-	}
-
-	nodeClassElement struct {
-		keyExpr nodeExpression
-		method  *nodeFunctionLiteral
-		kind    string
-		key     string
-		static  bool
-	}
-
-	nodeObjectPattern struct {
-		rest       nodeExpression
-		properties []nodeObjectPatternProperty
-	}
-
-	nodeObjectPatternProperty struct {
-		keyExpr nodeExpression
-		target  nodeExpression
-		key     string
-	}
-
-	nodeTaggedTemplate struct {
-		tag         nodeExpression
-		quasis      []string
-		raw         []string
-		expressions []nodeExpression
-	}
-
-	nodeTemplateLiteral struct {
-		strings     []string
-		expressions []nodeExpression
 	}
 
 	nodeThisExpression struct{}
@@ -748,7 +498,6 @@ type (
 
 	nodeVariableExpression struct {
 		initializer nodeExpression
-		target      nodeExpression
 		name        string
 		idx         file.Idx
 	}
@@ -761,25 +510,7 @@ type (
 	}
 
 	nodeBlockStatement struct {
-		list    []nodeStatement
-		lexical bool // contains let/const declarations at the block's top level
-	}
-
-	nodeLexicalDeclaration struct {
-		bindings  []nodeLexicalBinding
-		immutable bool // const
-	}
-
-	nodeClassStatement struct {
-		class *nodeClassLiteral
-		name  string
-	}
-
-	nodeLexicalBinding struct {
-		initializer nodeExpression
-		target      nodeExpression
-		name        string
-		hasValue    bool
+		list []nodeStatement
 	}
 
 	nodeBranchStatement struct {
@@ -811,21 +542,16 @@ type (
 	}
 
 	nodeForInStatement struct {
-		into      nodeExpression
-		source    nodeExpression
-		body      []nodeStatement
-		lexical   bool
-		immutable bool
-		of        bool
+		into   nodeExpression
+		source nodeExpression
+		body   []nodeStatement
 	}
 
 	nodeForStatement struct {
-		initializer     nodeExpression
-		update          nodeExpression
-		test            nodeExpression
-		body            []nodeStatement
-		lexicalBindings []string // let/const loop binding names, if any
-		immutable       bool
+		initializer nodeExpression
+		update      nodeExpression
+		test        nodeExpression
+		body        []nodeStatement
 	}
 
 	nodeIfStatement struct {
@@ -889,13 +615,6 @@ func (*nodeNewExpression) expressionNode()         {}
 func (*nodeObjectLiteral) expressionNode()         {}
 func (*nodeRegExpLiteral) expressionNode()         {}
 func (*nodeSequenceExpression) expressionNode()    {}
-func (*nodeSpreadExpression) expressionNode()      {}
-func (*nodeTaggedTemplate) expressionNode()        {}
-func (*nodeArrayPattern) expressionNode()          {}
-func (*nodeObjectPattern) expressionNode()         {}
-func (*nodeSuperExpression) expressionNode()       {}
-func (*nodeClassLiteral) expressionNode()          {}
-func (*nodeTemplateLiteral) expressionNode()       {}
 func (*nodeThisExpression) expressionNode()        {}
 func (*nodeUnaryExpression) expressionNode()       {}
 func (*nodeVariableExpression) expressionNode()    {}
@@ -914,8 +633,6 @@ func (*nodeForInStatement) statementNode()      {}
 func (*nodeForStatement) statementNode()        {}
 func (*nodeIfStatement) statementNode()         {}
 func (*nodeLabelledStatement) statementNode()   {}
-func (*nodeLexicalDeclaration) statementNode()  {}
-func (*nodeClassStatement) statementNode()      {}
 func (*nodeReturnStatement) statementNode()     {}
 func (*nodeSwitchStatement) statementNode()     {}
 func (*nodeThrowStatement) statementNode()      {}

@@ -3,9 +3,9 @@ package parser
 import (
 	"testing"
 
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/terst"
-	"github.com/incident-io/otto/token"
+	"github.com/robertkrimen/otto/file"
+	"github.com/robertkrimen/otto/terst"
+	"github.com/robertkrimen/otto/token"
 )
 
 var (
@@ -211,7 +211,7 @@ Second line \
 			token.VAR, "var", 1,
 			token.IF, "if", 5,
 			token.VAR, "var", 8,
-			token.CLASS, "class", 12,
+			token.KEYWORD, "class", 12,
 			token.EOF, "", 17,
 		)
 

@@ -114,11 +114,8 @@ func (fn bindFunctionObject) construct(argumentList []Value) Value {
 
 // nodeFunctionObject.
 type nodeFunctionObject struct {
-	stash              stasher
-	node               *nodeFunctionLiteral
-	homeObject         *object
-	this               Value
-	defaultDerivedCtor bool
+	node  *nodeFunctionLiteral
+	stash stasher
 }
 
 func (rt *runtime) newNodeFunctionObject(node *nodeFunctionLiteral, stash stasher) *object {
@@ -206,11 +203,6 @@ func (o *object) call(this Value, argumentList []Value, eval bool, frm frame) Va
 
 	case nodeFunctionObject:
 		rt := o.runtime
-		// Arrow functions do not bind their own `this`; they use the value
-		// captured lexically when the function literal was evaluated.
-		if fn.node.isArrow {
-			this = fn.this
-		}
 		stash := rt.enterFunctionScope(fn.stash, this)
 		rt.scope.frame = frame{
 			callee: fn.node.name,
@@ -220,10 +212,6 @@ func (o *object) call(this Value, argumentList []Value, eval bool, frm frame) Va
 		defer func() {
 			rt.leaveScope()
 		}()
-		// A default derived constructor implicitly forwards to super(...args).
-		if fn.defaultDerivedCtor {
-			rt.superConstructor().call(this, argumentList, false, frm)
-		}
 		callValue := rt.cmplCallNodeFunction(o, stash, fn.node, argumentList)
 		if value, valid := callValue.value.(result); valid {
 			return value.value
