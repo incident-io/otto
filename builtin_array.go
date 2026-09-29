@@ -44,6 +44,7 @@ func builtinArrayToLocaleString(call FunctionCall) Value {
 		return stringValue("")
 	}
 	stringList := make([]string, 0, preallocation(length))
+	size := 0
 	for index := range length {
 		call.runtime.checkInterrupt()
 		value := thisObject.get(arrayIndexToString(index))
@@ -58,6 +59,8 @@ func builtinArrayToLocaleString(call FunctionCall) Value {
 			}
 			stringValue = toLocaleString.call(call.runtime, objectValue(obj)).string()
 		}
+		size += len(stringValue) + len(separator)
+		call.runtime.checkStringLength(size - len(separator))
 		stringList = append(stringList, stringValue)
 	}
 	return stringValue(strings.Join(stringList, separator))
@@ -155,6 +158,7 @@ func builtinArrayJoin(call FunctionCall) Value {
 		return stringValue("")
 	}
 	stringList := make([]string, 0, preallocation(length))
+	size := 0
 	for index := range length {
 		call.runtime.checkInterrupt()
 		value := thisObject.get(arrayIndexToString(index))
@@ -164,6 +168,8 @@ func builtinArrayJoin(call FunctionCall) Value {
 		default:
 			stringValue = value.string()
 		}
+		size += len(stringValue) + len(separator)
+		call.runtime.checkStringLength(size - len(separator))
 		stringList = append(stringList, stringValue)
 	}
 	return stringValue(strings.Join(stringList, separator))
