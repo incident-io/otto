@@ -3,6 +3,7 @@ package otto
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -1767,6 +1768,126 @@ func TestOttoInterrupt(t *testing.T) {
 			name:   "empty-do-while",
 			script: "do{} while(true)",
 		},
+		{
+			name:   "try-catch",
+			script: `try { for(;;) {} } catch (e) {}`,
+		},
+		{
+			name:   "nested-try-catch",
+			script: `try { try { for(;;) {} } catch (e) {} } catch (e) {} for(;;) {}`,
+		},
+		{
+			name:   "try-catch-loop-in-catch",
+			script: `try { for(;;) {} } catch (e) { for(;;) {} }`,
+		},
+		{
+			name:   "try-finally-loop-in-finally",
+			script: `try { for(;;) {} } finally { for(;;) {} }`,
+		},
+		{
+			name:   "array-join",
+			script: `new Array(4294967295).join("")`,
+		},
+		{
+			name:   "array-to-locale-string",
+			script: `new Array(4294967295).toLocaleString()`,
+		},
+		{
+			name:   "array-concat",
+			script: `[].concat(new Array(4294967295))`,
+		},
+		{
+			name:   "array-shift",
+			script: `new Array(4294967295).shift()`,
+		},
+		{
+			name:   "array-splice",
+			script: `new Array(4294967295).splice(0)`,
+		},
+		{
+			name:   "array-splice-shrink",
+			script: `new Array(4294967295).splice(0, 1)`,
+		},
+		{
+			name:   "array-splice-grow",
+			script: `new Array(4294967294).splice(0, 0, 1, 2)`,
+		},
+		{
+			name:   "array-slice",
+			script: `new Array(4294967295).slice(0)`,
+		},
+		{
+			name:   "array-unshift",
+			script: `new Array(4294967294).unshift(1)`,
+		},
+		{
+			name:   "array-reverse",
+			script: `new Array(4294967295).reverse()`,
+		},
+		{
+			name:   "array-sort",
+			script: `new Array(4294967295).sort()`,
+		},
+		{
+			name:   "array-index-of",
+			script: `new Array(4294967295).indexOf(1)`,
+		},
+		{
+			name:   "array-last-index-of",
+			script: `new Array(4294967295).lastIndexOf(1)`,
+		},
+		{
+			name:   "array-every",
+			script: `new Array(4294967295).every(function() {})`,
+		},
+		{
+			name:   "array-some",
+			script: `new Array(4294967295).some(function() {})`,
+		},
+		{
+			name:   "array-for-each",
+			script: `new Array(4294967295).forEach(function() {})`,
+		},
+		{
+			name:   "array-map",
+			script: `new Array(4294967295).map(function() {})`,
+		},
+		{
+			name:   "array-filter",
+			script: `new Array(4294967295).filter(function() {})`,
+		},
+		{
+			name:   "array-reduce",
+			script: `new Array(4294967295).reduce(function() {})`,
+		},
+		{
+			name:   "array-reduce-initial",
+			script: `new Array(4294967295).reduce(function() {}, 0)`,
+		},
+		{
+			name:   "array-reduce-right",
+			script: `new Array(4294967295).reduceRight(function() {})`,
+		},
+		{
+			name:   "array-reduce-right-initial",
+			script: `new Array(4294967295).reduceRight(function() {}, 0)`,
+		},
+		{
+			name:   "array-length-truncate",
+			script: `var a = new Array(4294967295); a.length = 0`,
+		},
+		{
+			name:   "function-apply",
+			script: `(function() {}).apply(null, {length: 4294967295})`,
+		},
+		{
+			name:   "json-stringify-array",
+			script: `JSON.stringify(new Array(4294967295))`,
+		},
+		{
+			name:   "json-stringify-replacer",
+			script: `JSON.stringify({}, new Array(4294967295))`,
+		},
 	}
 
 	halt := errors.New("interrupt")
@@ -1801,6 +1922,68 @@ func TestOttoInterrupt(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOttoStringLengthLimit(t *testing.T) {
+	const limit = 1 << 20
+	big := `var big = new Array(1 << 19).join("x");`
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{name: "plus", script: `var s = "x"; for (;;) s = s + s`},
+		{name: "plus-assign", script: `var s = "x"; for (;;) s += s`},
+		{name: "array-join", script: big + `new Array(1 << 20).join(big)`},
+		{name: "array-join-elements", script: big + `[big, big, big].join()`},
+		{name: "array-to-string", script: big + `String([big, big, big])`},
+		{name: "array-to-locale-string", script: big + `[big, big, big].toLocaleString()`},
+		{name: "string-concat", script: big + `big.concat(big, big)`},
+		{name: "string-replace", script: big + `new Array(1 << 10).join("a").replace(/a/g, big)`},
+		{name: "string-replace-function", script: big + `new Array(1 << 10).join("a").replace(/a/g, function() { return big })`},
+		{name: "json-stringify", script: big + `JSON.stringify([big, big, big])`},
+		{name: "json-stringify-keys", script: big + `var o = {}; o[big] = 1; o[big + "y"] = 2; o[big + "z"] = 3; JSON.stringify(o)`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vm := New()
+			vm.SetStringLengthLimit(limit)
+			_, err := vm.Run(tc.script)
+			require.EqualError(t, err, "RangeError: Invalid string length")
+		})
+	}
+
+	t.Run("catchable", func(t *testing.T) {
+		vm := New()
+		vm.SetStringLengthLimit(limit)
+		value, err := vm.Run(big + `try { big + big + big } catch (e) { e.name }`)
+		require.NoError(t, err)
+		require.Equal(t, "RangeError", value.String())
+	})
+
+	t.Run("within-limit", func(t *testing.T) {
+		vm := New()
+		vm.SetStringLengthLimit(limit)
+		value, err := vm.Run(big + `[
+			(big + big).length,
+			big.concat(big).length,
+			[big, big].join("").length,
+			big.replace(/x/g, "yy").length,
+			JSON.stringify([big]).length
+		].join()`)
+		require.NoError(t, err)
+		n := (1 << 19) - 1
+		require.Equal(t, fmt.Sprintf("%d,%d,%d,%d,%d", 2*n, 2*n, 2*n, 2*n, n+4), value.String())
+	})
+
+	t.Run("unlimited-by-default", func(t *testing.T) {
+		vm := New()
+		value, err := vm.Run(big + `(big + big + big).length`)
+		require.NoError(t, err)
+		length, err := value.ToInteger()
+		require.NoError(t, err)
+		require.Equal(t, int64(3*((1<<19)-1)), length)
+	})
 }
 
 func BenchmarkNew(b *testing.B) {

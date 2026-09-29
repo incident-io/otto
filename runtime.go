@@ -64,8 +64,15 @@ type runtime struct {
 	random       func() float64
 	labels       []string
 	stackLimit   int
+	stringLimit  int
 	traceLimit   int
 	lck          sync.Mutex
+}
+
+func (rt *runtime) checkStringLength(length int) {
+	if rt.stringLimit > 0 && length > rt.stringLimit {
+		panic(rt.panicRangeError("Invalid string length"))
+	}
 }
 
 func (rt *runtime) enterScope(scop *scope) {
@@ -123,6 +130,9 @@ func (rt *runtime) tryCatchEvaluate(inner func() Value) (tryValue Value, isExcep
 	// Otherwise, some sort of unknown panic happened, we'll just propagate it.
 	defer func() {
 		if caught := recover(); caught != nil {
+			if halt, ok := caught.(*interruptPanic); ok {
+				panic(halt)
+			}
 			if excep, ok := caught.(*exception); ok {
 				caught = excep.eject()
 			}
@@ -141,6 +151,47 @@ func (rt *runtime) tryCatchEvaluate(inner func() Value) (tryValue Value, isExcep
 	}()
 
 	return inner(), false
+}
+
+// interruptPanic wraps a panic raised by an Interrupt function so that it
+// unwinds through JavaScript try/catch/finally instead of being caught.
+// catchPanic unwraps it, so callers of Run, Call, etc. see the original value.
+type interruptPanic struct {
+	value interface{}
+}
+
+// checkInterrupt runs a pending Interrupt function, if any, without blocking.
+// Native builtins that loop over JavaScript-controlled lengths must call it on
+// every iteration so that Interrupt can halt them.
+func (rt *runtime) checkInterrupt() {
+	if rt.otto.Interrupt == nil {
+		return
+	}
+	select {
+	case fn := <-rt.otto.Interrupt:
+		if fn != nil {
+			runInterrupt(fn)
+		}
+	default:
+	}
+}
+
+// maxPreallocation caps slice capacity derived from JavaScript-controlled
+// lengths, so that e.g. {length: 4294967295} cannot trigger a huge allocation
+// before checkInterrupt gets a chance to run.
+const maxPreallocation = 1 << 16
+
+func preallocation(length int64) int64 {
+	return max(min(length, maxPreallocation), 0)
+}
+
+func runInterrupt(fn func()) {
+	defer func() {
+		if caught := recover(); caught != nil {
+			panic(&interruptPanic{value: caught})
+		}
+	}()
+	fn()
 }
 
 func (rt *runtime) toObject(value Value) *object {

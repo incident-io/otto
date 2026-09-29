@@ -45,6 +45,7 @@ func builtinJSONReviveWalk(ctx builtinJSONParseContext, holder *object, name str
 		if isArray(obj) {
 			length := int64(objectLength(obj))
 			for index := range length {
+				ctx.call.runtime.checkInterrupt()
 				idxName := arrayIndexToString(index)
 				idxValue := builtinJSONReviveWalk(ctx, obj, idxName)
 				if idxValue.IsUndefined() {
@@ -100,25 +101,34 @@ func builtinJSONParseWalk(ctx builtinJSONParseContext, rawValue interface{}) (Va
 
 type builtinJSONStringifyContext struct {
 	replacerFunction *Value
+	size             *int
 	gap              string
 	stack            []*object
 	propertyList     []string
 	call             FunctionCall
 }
 
+// grow adds an estimate of the encoded size of a value to the running total
+// so that the string length limit is enforced before marshalling.
+func (ctx builtinJSONStringifyContext) grow(size int) {
+	*ctx.size += size
+	ctx.call.runtime.checkStringLength(*ctx.size)
+}
+
 func builtinJSONStringify(call FunctionCall) Value {
 	ctx := builtinJSONStringifyContext{
 		call:  call,
 		stack: []*object{nil},
+		size:  new(int),
 	}
 	replacer := call.Argument(1).object()
 	if replacer != nil {
 		if isArray(replacer) {
 			length := objectLength(replacer)
 			seen := map[string]bool{}
-			propertyList := make([]string, length)
-			length = 0
-			for index := range propertyList {
+			propertyList := make([]string, 0, preallocation(int64(length)))
+			for index := range length {
+				call.runtime.checkInterrupt()
 				value := replacer.get(arrayIndexToString(int64(index)))
 				switch value.kind {
 				case valueObject:
@@ -136,10 +146,9 @@ func builtinJSONStringify(call FunctionCall) Value {
 					continue
 				}
 				seen[name] = true
-				length++
-				propertyList[index] = name
+				propertyList = append(propertyList, name)
 			}
-			ctx.propertyList = propertyList[0:length]
+			ctx.propertyList = propertyList
 		} else if replacer.class == classFunctionName {
 			value := objectValue(replacer)
 			ctx.replacerFunction = &value
@@ -225,10 +234,14 @@ func builtinJSONStringifyWalk(ctx builtinJSONStringifyContext, key string, holde
 
 	switch value.kind {
 	case valueBoolean:
+		ctx.grow(len(key) + 5)
 		return value.bool(), true
 	case valueString:
-		return value.string(), true
+		str := value.string()
+		ctx.grow(len(key) + len(str))
+		return str, true
 	case valueNumber:
+		ctx.grow(len(key) + 1)
 		integer := value.number()
 		switch integer.kind {
 		case numberInteger:
@@ -239,8 +252,10 @@ func builtinJSONStringifyWalk(ctx builtinJSONStringifyContext, key string, holde
 			return nil, true
 		}
 	case valueNull:
+		ctx.grow(len(key) + 4)
 		return nil, true
 	case valueObject:
+		ctx.grow(len(key) + 2)
 		objHolder := value.object()
 		if value := value.object(); nil != value {
 			for _, obj := range ctx.stack {
@@ -263,11 +278,12 @@ func builtinJSONStringifyWalk(ctx builtinJSONStringifyContext, key string, holde
 			default:
 				panic(ctx.call.runtime.panicTypeError(fmt.Sprintf("JSON.stringify: invalid length: %v (%[1]T)", value)))
 			}
-			array := make([]interface{}, length)
-			for index := range array {
+			array := make([]interface{}, 0, preallocation(int64(length)))
+			for index := range length {
+				ctx.call.runtime.checkInterrupt()
 				name := arrayIndexToString(int64(index))
 				value, _ := builtinJSONStringifyWalk(ctx, name, objHolder)
-				array[index] = value
+				array = append(array, value)
 			}
 			return array, true
 		} else if objHolder.class != classFunctionName {
