@@ -1,9 +1,8 @@
 package parser
 
 import (
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/token"
+	"github.com/robertkrimen/otto/ast"
+	"github.com/robertkrimen/otto/token"
 )
 
 func (p *parser) parseBlockStatement() *ast.BlockStatement {
@@ -84,10 +83,6 @@ func (p *parser) parseStatement() ast.Statement {
 		return p.parseWithStatement()
 	case token.VAR:
 		return p.parseVariableStatement()
-	case token.LET, token.CONST:
-		return p.parseLexicalDeclaration()
-	case token.CLASS:
-		return p.parseClass(true)
 	case token.FUNCTION:
 		return p.parseFunctionStatement()
 	case token.SWITCH:
@@ -222,52 +217,13 @@ func (p *parser) parseFunctionParameterList() *ast.ParameterList {
 		p.comments.Unset()
 	}
 	var list []*ast.Identifier
-	var defaults []ast.Expression
-	var targets []ast.Expression
-	var rest *ast.Identifier
-	hasDefault := false
-	hasTarget := false
 	for p.token != token.RIGHT_PARENTHESIS && p.token != token.EOF {
-		if p.token == token.ELLIPSIS {
-			// A rest parameter (...name) must be the last parameter.
-			p.next()
-			if p.token != token.IDENTIFIER {
-				p.expect(token.IDENTIFIER)
-				break
-			}
-			rest = p.parseIdentifier()
-			break
-		}
-
-		var target ast.Expression
-		switch p.token {
-		case token.LEFT_BRACKET, token.LEFT_BRACE:
-			// A destructuring parameter, e.g. function f({a}, [b]) {}.
-			target = p.parseBindingTarget()
-			list = append(list, &ast.Identifier{Idx: p.idx})
-			hasTarget = true
-		case token.IDENTIFIER:
-			list = append(list, p.parseIdentifier())
-		default:
+		if p.token != token.IDENTIFIER {
 			p.expect(token.IDENTIFIER)
-			if p.token != token.RIGHT_PARENTHESIS {
-				p.next()
-			}
-			continue
+		} else {
+			identifier := p.parseIdentifier()
+			list = append(list, identifier)
 		}
-		targets = append(targets, target)
-
-		var def ast.Expression
-		if p.token == token.ASSIGN {
-			if p.mode&StoreComments != 0 {
-				p.comments.Unset()
-			}
-			p.next()
-			def = p.parseAssignmentExpression()
-			hasDefault = true
-		}
-		defaults = append(defaults, def)
-
 		if p.token != token.RIGHT_PARENTHESIS {
 			if p.mode&StoreComments != 0 {
 				p.comments.Unset()
@@ -277,22 +233,11 @@ func (p *parser) parseFunctionParameterList() *ast.ParameterList {
 	}
 	closing := p.expect(token.RIGHT_PARENTHESIS)
 
-	node := &ast.ParameterList{
+	return &ast.ParameterList{
 		Opening: opening,
 		List:    list,
-		Rest:    rest,
 		Closing: closing,
 	}
-	// Only retain the parallel slices when they carry information, keeping the
-	// common (plain-identifier) case unchanged.
-	if hasDefault {
-		node.Defaults = defaults
-	}
-	if hasTarget {
-		node.Targets = targets
-	}
-
-	return node
 }
 
 func (p *parser) parseFunctionStatement() *ast.FunctionStatement {
@@ -338,96 +283,6 @@ func (p *parser) parseFunction(declaration bool) *ast.FunctionLiteral {
 	return node
 }
 
-func (p *parser) parseClass(declaration bool) *ast.ClassLiteral {
-	node := &ast.ClassLiteral{
-		Class: p.expect(token.CLASS),
-	}
-
-	if p.token == token.IDENTIFIER {
-		node.Name = p.parseIdentifier()
-	} else if declaration {
-		p.expect(token.IDENTIFIER)
-	}
-
-	if p.token == token.EXTENDS {
-		p.next()
-		node.SuperClass = p.parseLeftHandSideExpressionAllowCall()
-	}
-
-	p.expect(token.LEFT_BRACE)
-	for p.token != token.RIGHT_BRACE && p.token != token.EOF {
-		if p.token == token.SEMICOLON {
-			p.next()
-			continue
-		}
-		node.Body = append(node.Body, p.parseClassElement())
-	}
-	node.RightBrace = p.expect(token.RIGHT_BRACE)
-	node.Source = p.slice(node.Idx0(), node.Idx1())
-
-	return node
-}
-
-func (p *parser) parseClassElement() *ast.ClassElement {
-	element := &ast.ClassElement{Kind: "method"}
-	methodIdx := p.idx
-
-	// static modifier (unless "static" is itself the method name).
-	if p.token == token.IDENTIFIER && p.literal == "static" {
-		p.next()
-		if p.token == token.LEFT_PARENTHESIS {
-			element.Key = "static"
-			element.Method = p.parseClassMethodDefinition(methodIdx)
-			return element
-		}
-		element.Static = true
-		methodIdx = p.idx
-	}
-
-	// get / set accessor (unless "get"/"set" is itself the method name).
-	if p.token == token.IDENTIFIER && (p.literal == "get" || p.literal == "set") {
-		accessor := p.literal
-		p.next()
-		if p.token == token.LEFT_PARENTHESIS {
-			element.Key = accessor
-			element.Method = p.parseClassMethodDefinition(methodIdx)
-			return element
-		}
-		element.Kind = accessor
-		p.parseClassElementKey(element)
-		element.Method = p.parseClassMethodDefinition(methodIdx)
-		return element
-	}
-
-	p.parseClassElementKey(element)
-	element.Method = p.parseClassMethodDefinition(methodIdx)
-	if !element.Static && element.Kind == "method" && element.Key == "constructor" {
-		element.Kind = "constructor"
-	}
-	return element
-}
-
-func (p *parser) parseClassElementKey(element *ast.ClassElement) {
-	if p.token == token.LEFT_BRACKET {
-		keyExpr, _ := p.parseComputedPropertyKey()
-		element.KeyExpression = keyExpr
-		return
-	}
-	_, key := p.parseObjectPropertyKey()
-	element.Key = key
-}
-
-func (p *parser) parseClassMethodDefinition(idx file.Idx) *ast.FunctionLiteral {
-	parameterList := p.parseFunctionParameterList()
-	node := &ast.FunctionLiteral{
-		Function:      idx,
-		ParameterList: parameterList,
-	}
-	p.parseFunctionBlock(node)
-	node.Source = p.slice(node.Idx0(), node.Idx1())
-	return node
-}
-
 func (p *parser) parseFunctionBlock(node *ast.FunctionLiteral) {
 	p.openScope()
 	inFunction := p.scope.inFunction
@@ -438,119 +293,6 @@ func (p *parser) parseFunctionBlock(node *ast.FunctionLiteral) {
 	}()
 	node.Body = p.parseBlockStatement()
 	node.DeclarationList = p.scope.declarationList
-}
-
-// arrowParameterList converts an already-parsed expression (the contents of a
-// parenthesised group) into a list of arrow function parameters. It only
-// accepts plain identifiers; defaults, rest and destructuring are not yet
-// supported.
-func arrowParameterList(expression ast.Expression, opening, closing file.Idx) (*ast.ParameterList, bool) {
-	pl := &ast.ParameterList{Opening: opening, Closing: closing}
-	hasTarget := false
-	hasDefault := false
-
-	add := func(e ast.Expression) bool {
-		var def ast.Expression
-		if assign, ok := e.(*ast.AssignExpression); ok {
-			if assign.Operator != token.ASSIGN {
-				return false
-			}
-			def = assign.Right
-			e = assign.Left
-			hasDefault = true
-		}
-
-		var name *ast.Identifier
-		var target ast.Expression
-		switch t := e.(type) {
-		case *ast.Identifier:
-			name = t
-		case *ast.ArrayLiteral, *ast.ObjectLiteral:
-			pattern, ok := literalToPattern(e)
-			if !ok {
-				return false
-			}
-			target = pattern
-			name = &ast.Identifier{Idx: e.Idx0()}
-			hasTarget = true
-		case *ast.ArrayPattern, *ast.ObjectPattern:
-			target = e
-			name = &ast.Identifier{Idx: e.Idx0()}
-			hasTarget = true
-		default:
-			return false
-		}
-		pl.List = append(pl.List, name)
-		pl.Targets = append(pl.Targets, target)
-		pl.Defaults = append(pl.Defaults, def)
-		return true
-	}
-
-	if seq, ok := expression.(*ast.SequenceExpression); ok {
-		for _, item := range seq.Sequence {
-			if !add(item) {
-				return nil, false
-			}
-		}
-	} else if !add(expression) {
-		return nil, false
-	}
-
-	if !hasTarget {
-		pl.Targets = nil
-	}
-	if !hasDefault {
-		pl.Defaults = nil
-	}
-	return pl, true
-}
-
-// parseArrowFunction parses the "=> body" portion of an arrow function, given a
-// parameter list that has already been collected by the caller. p.token is
-// expected to be token.ARROW.
-func (p *parser) parseArrowFunction(start file.Idx, params *ast.ParameterList) ast.Expression {
-	node := &ast.FunctionLiteral{
-		Function:      start,
-		IsArrow:       true,
-		ParameterList: params,
-	}
-	if p.mode&StoreComments != 0 {
-		p.comments.Unset()
-	}
-	p.expect(token.ARROW)
-	p.parseArrowFunctionBody(node)
-	node.Source = p.slice(node.Idx0(), node.Idx1())
-
-	return node
-}
-
-func (p *parser) parseArrowFunctionBody(node *ast.FunctionLiteral) {
-	if p.token == token.LEFT_BRACE {
-		// A block body behaves like an ordinary function body.
-		p.openScope()
-		inFunction := p.scope.inFunction
-		p.scope.inFunction = true
-		defer func() {
-			p.scope.inFunction = inFunction
-			p.closeScope()
-		}()
-		node.Body = p.parseBlockStatement()
-		node.DeclarationList = p.scope.declarationList
-		return
-	}
-
-	// A concise body is a single expression with an implicit return.
-	expression := p.parseAssignmentExpression()
-	node.Body = &ast.BlockStatement{
-		LeftBrace: expression.Idx0(),
-		List: []ast.Statement{
-			&ast.ReturnStatement{
-				Return:   expression.Idx0(),
-				Argument: expression,
-			},
-		},
-		RightBrace: expression.Idx1(),
-	}
 }
 
 func (p *parser) parseDebuggerStatement() ast.Statement {
@@ -758,12 +500,6 @@ func (p *parser) parseIterationStatement() ast.Statement {
 	return p.parseStatement()
 }
 
-// isForOf reports whether the current token is the contextual keyword "of",
-// used to recognise a for-of loop.
-func (p *parser) isForOf() bool {
-	return p.token == token.IDENTIFIER && p.literal == "of"
-}
-
 func (p *parser) parseForIn(into ast.Expression) *ast.ForInStatement {
 	// Already have consumed "<into> in"
 
@@ -824,33 +560,23 @@ func (p *parser) parseForOrForInStatement() ast.Statement {
 	var left []ast.Expression
 
 	forIn := false
-	forOf := false
-	var lexicalKind token.Token
 	if p.token != token.SEMICOLON {
 		allowIn := p.scope.allowIn
 		p.scope.allowIn = false
-		if p.token == token.VAR || p.token == token.LET || p.token == token.CONST {
+		if p.token == token.VAR {
 			tokenIdx := p.idx
-			kind := p.token
 			var varComments []*ast.Comment
 			if p.mode&StoreComments != 0 {
 				varComments = p.comments.FetchAll()
 				p.comments.Unset()
 			}
 			p.next()
-			var list []ast.Expression
-			if kind == token.VAR {
-				list = p.parseVariableDeclarationList(tokenIdx)
-			} else {
-				lexicalKind = kind
-				list = p.parseLexicalBindingList()
-			}
-			if len(list) == 1 && (p.token == token.IN || p.isForOf()) {
+			list := p.parseVariableDeclarationList(tokenIdx)
+			if len(list) == 1 && p.token == token.IN {
 				if p.mode&StoreComments != 0 {
 					p.comments.Unset()
 				}
-				forOf = p.isForOf()
-				p.next() // in or of
+				p.next() // in
 				forIn = true
 				left = []ast.Expression{list[0]} // There is only one declaration
 			} else {
@@ -861,8 +587,7 @@ func (p *parser) parseForOrForInStatement() ast.Statement {
 			}
 		} else {
 			left = append(left, p.parseExpression())
-			if p.token == token.IN || p.isForOf() {
-				forOf = p.isForOf()
+			if p.token == token.IN {
 				p.next()
 				forIn = true
 			}
@@ -874,19 +599,6 @@ func (p *parser) parseForOrForInStatement() ast.Statement {
 		switch left[0].(type) {
 		case *ast.Identifier, *ast.DotExpression, *ast.BracketExpression, *ast.VariableExpression:
 			// These are all acceptable
-		case *ast.ArrayPattern, *ast.ObjectPattern:
-			// A binding pattern declared with var/let/const, e.g.
-			// for (const [a, b] of x) or for (let {x} in obj).
-		case *ast.ArrayLiteral, *ast.ObjectLiteral:
-			// An assignment destructuring target, e.g. for ([a, b] of x)
-			// or for ({a} in obj). Reinterpret the literal as a pattern.
-			pattern, ok := literalToPattern(left[0])
-			if !ok {
-				p.error(idx, "Invalid left-hand side in for-in")
-				p.nextStatement()
-				return &ast.BadStatement{From: idx, To: p.idx}
-			}
-			left[0] = pattern
 		default:
 			p.error(idx, "Invalid left-hand side in for-in")
 			p.nextStatement()
@@ -895,8 +607,6 @@ func (p *parser) parseForOrForInStatement() ast.Statement {
 
 		forin := p.parseForIn(left[0])
 		forin.For = idx
-		forin.Lexical = lexicalKind
-		forin.Of = forOf
 		if p.mode&StoreComments != 0 {
 			p.comments.CommentMap.AddComments(forin, comments, ast.LEADING)
 			p.comments.CommentMap.AddComments(forin, forComments, ast.FOR)
@@ -911,7 +621,6 @@ func (p *parser) parseForOrForInStatement() ast.Statement {
 	initializer := &ast.SequenceExpression{Sequence: left}
 	forstatement := p.parseFor(initializer)
 	forstatement.For = idx
-	forstatement.Lexical = lexicalKind
 	if p.mode&StoreComments != 0 {
 		p.comments.CommentMap.AddComments(forstatement, comments, ast.LEADING)
 		p.comments.CommentMap.AddComments(forstatement, forComments, ast.FOR)
@@ -939,47 +648,6 @@ func (p *parser) parseVariableStatement() *ast.VariableStatement {
 	p.semicolon()
 
 	return statement
-}
-
-func (p *parser) parseLexicalDeclaration() *ast.LexicalDeclaration {
-	var comments []*ast.Comment
-	if p.mode&StoreComments != 0 {
-		comments = p.comments.FetchAll()
-	}
-	kind := p.token // token.LET or token.CONST
-	idx := p.expect(kind)
-
-	// Parse the binding list without registering it for var-style hoisting;
-	// lexical bindings are scoped to their enclosing block.
-	list := p.parseLexicalBindingList()
-
-	statement := &ast.LexicalDeclaration{
-		Idx:   idx,
-		Token: kind,
-		List:  list,
-	}
-	if p.mode&StoreComments != 0 {
-		p.comments.CommentMap.AddComments(statement, comments, ast.LEADING)
-		p.comments.Unset()
-	}
-	p.semicolon()
-
-	return statement
-}
-
-// parseLexicalBindingList parses a comma-separated list of let/const bindings.
-// Unlike parseVariableDeclarationList it does not declare the names in the
-// surrounding function scope, since lexical declarations are block-scoped.
-func (p *parser) parseLexicalBindingList() []ast.Expression {
-	var list []ast.Expression
-	for {
-		list = append(list, p.parseVariableDeclaration(nil))
-		if p.token != token.COMMA {
-			break
-		}
-		p.next()
-	}
-	return list
 }
 
 func (p *parser) parseDoWhileStatement() ast.Statement {

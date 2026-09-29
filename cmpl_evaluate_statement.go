@@ -4,8 +4,7 @@ import (
 	"fmt"
 	goruntime "runtime"
 
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/token"
+	"github.com/robertkrimen/otto/token"
 )
 
 func (rt *runtime) cmplEvaluateNodeStatement(node nodeStatement) Value {
@@ -24,13 +23,16 @@ func (rt *runtime) cmplEvaluateNodeStatement(node nodeStatement) Value {
 
 	switch node := node.(type) {
 	case *nodeBlockStatement:
-		return rt.cmplEvaluateNodeBlockStatement(node)
+		labels := rt.labels
+		rt.labels = nil
 
-	case *nodeLexicalDeclaration:
-		return rt.cmplEvaluateNodeLexicalDeclaration(node)
-
-	case *nodeClassStatement:
-		return rt.cmplEvaluateNodeClassStatement(node)
+		value := rt.cmplEvaluateNodeStatementList(node.list)
+		if value.kind == valueResult {
+			if value.evaluateBreak(labels) == resultBreak {
+				return emptyValue
+			}
+		}
+		return value
 
 	case *nodeBranchStatement:
 		target := node.label
@@ -166,181 +168,9 @@ resultBreak:
 	return result
 }
 
-// bindMode selects what binding a destructuring pattern performs at each leaf.
-type bindMode int
-
-const (
-	bindAssign bindMode = iota // assign to an existing reference
-	bindLet                    // declare a new let binding
-	bindConst                  // declare a new const binding
-)
-
-// bindPattern binds a value against a destructuring target (an identifier, a
-// member reference, a nested pattern, or a target-with-default), using the
-// given mode at each leaf.
-func (rt *runtime) bindPattern(target nodeExpression, value Value, mode bindMode) {
-	switch t := target.(type) {
-	case *nodeIdentifier:
-		rt.bindName(t.name, value, mode, t.idx)
-	case *nodeDotExpression, *nodeBracketExpression:
-		// Only valid in assignment destructuring; assign to the member.
-		ref := rt.cmplEvaluateNodeExpression(target)
-		rt.putValue(ref.reference(), value)
-	case *nodeAssignExpression:
-		// target = default
-		if value.IsUndefined() {
-			value = rt.cmplEvaluateNodeExpression(t.right).resolve()
-		}
-		rt.bindPattern(t.left, value, mode)
-	case *nodeArrayPattern:
-		rt.bindArrayPattern(t, value, mode)
-	case *nodeObjectPattern:
-		rt.bindObjectPattern(t, value, mode)
-	default:
-		panic(rt.panicTypeError("invalid destructuring target %T", target))
-	}
-}
-
-func (rt *runtime) bindName(name string, value Value, mode bindMode, idx file.Idx) {
-	switch mode {
-	case bindLet:
-		rt.declareLexicalBinding(name, value, false)
-	case bindConst:
-		rt.declareLexicalBinding(name, value, true)
-	default: // bindAssign
-		ref := getIdentifierReference(rt, rt.scope.lexical, name, false, at(idx))
-		rt.putValue(ref, value)
-	}
-}
-
-func (rt *runtime) bindArrayPattern(pattern *nodeArrayPattern, value Value, mode bindMode) {
-	values := rt.spreadIterable(value)
-	for i, element := range pattern.elements {
-		if element == nil {
-			continue // elision (hole)
-		}
-		var elementValue Value
-		if i < len(values) {
-			elementValue = values[i]
-		}
-		rt.bindPattern(element, elementValue, mode)
-	}
-	if pattern.rest != nil {
-		rest := []Value{}
-		if len(pattern.elements) < len(values) {
-			rest = append(rest, values[len(pattern.elements):]...)
-		}
-		rt.bindPattern(pattern.rest, objectValue(rt.newArrayOf(rest)), mode)
-	}
-}
-
-func (rt *runtime) bindObjectPattern(pattern *nodeObjectPattern, value Value, mode bindMode) {
-	switch value.kind {
-	case valueUndefined, valueNull:
-		panic(rt.panicTypeError("cannot destructure %v", value))
-	}
-	obj := rt.toObject(value)
-
-	taken := map[string]bool{}
-	for _, prop := range pattern.properties {
-		key := prop.key
-		if prop.keyExpr != nil {
-			key = rt.cmplEvaluateNodeExpression(prop.keyExpr).resolve().string()
-		}
-		taken[key] = true
-		rt.bindPattern(prop.target, obj.get(key), mode)
-	}
-	if pattern.rest != nil {
-		rest := rt.newObject()
-		obj.enumerate(false, func(name string) bool {
-			if !taken[name] {
-				rest.put(name, obj.get(name), false)
-			}
-			return true
-		})
-		rt.bindPattern(pattern.rest, objectValue(rest), mode)
-	}
-}
-
-// cmplEvaluateNodeBlockStatement evaluates a block, introducing a fresh lexical
-// environment record when the block contains let/const declarations.
-func (rt *runtime) cmplEvaluateNodeBlockStatement(node *nodeBlockStatement) Value {
-	labels := rt.labels
-	rt.labels = nil
-
-	if node.lexical {
-		restore := rt.enterLexicalScope()
-		defer restore()
-	}
-
-	value := rt.cmplEvaluateNodeStatementList(node.list)
-	if value.kind == valueResult {
-		if value.evaluateBreak(labels) == resultBreak {
-			return emptyValue
-		}
-	}
-	return value
-}
-
-// enterLexicalScope pushes a new declarative environment record as the current
-// lexical environment, returning a function that restores the previous one.
-func (rt *runtime) enterLexicalScope() func() {
-	saved := rt.scope.lexical
-	rt.scope.lexical = rt.newDeclarationStash(saved)
-	return func() {
-		rt.scope.lexical = saved
-	}
-}
-
-// cmplEvaluateNodeLexicalDeclaration creates let/const bindings in the current
-// lexical environment. There is no temporal dead zone: a binding read before
-// its declaration resolves to an outer scope rather than throwing.
-func (rt *runtime) cmplEvaluateNodeLexicalDeclaration(node *nodeLexicalDeclaration) Value {
-	for _, binding := range node.bindings {
-		value := Value{}
-		if binding.hasValue {
-			value = rt.cmplEvaluateNodeExpression(binding.initializer).resolve()
-		}
-		if binding.target != nil {
-			mode := bindLet
-			if node.immutable {
-				mode = bindConst
-			}
-			rt.bindPattern(binding.target, value, mode)
-			continue
-		}
-		rt.declareLexicalBinding(binding.name, value, node.immutable)
-	}
-	return emptyValue
-}
-
-// declareLexicalBinding creates a single let/const binding in the current
-// lexical environment. When the environment is a declarative record (the usual
-// case for blocks, loops and lexical-scoped programs) const immutability is
-// enforced; otherwise it falls back to an ordinary binding.
-func (rt *runtime) declareLexicalBinding(name string, value Value, immutable bool) {
-	if ds, ok := rt.scope.lexical.(*dclStash); ok {
-		if immutable {
-			ds.createImmutableBinding(name, value)
-			return
-		}
-		if ds.hasBinding(name) {
-			ds.setBinding(name, value, false)
-		} else {
-			ds.createBinding(name, false, value)
-		}
-		return
-	}
-	rt.scope.lexical.setValue(name, value, false)
-}
-
 func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Value {
 	labels := append(rt.labels, "") //nolint:gocritic
 	rt.labels = nil
-
-	if node.of {
-		return rt.cmplEvaluateNodeForOfStatement(node)
-	}
 
 	source := rt.cmplEvaluateNodeExpression(node.source)
 	sourceValue := source.resolve()
@@ -355,24 +185,19 @@ func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Valu
 	into := node.into
 	body := node.body
 
-	// A block-scoped loop variable (for (let k in obj)) gets a fresh binding
-	// per iteration in its own lexical environment.
-	lexical := node.lexical
-	var outerLexical stasher
-	if lexical {
-		outerLexical = rt.scope.lexical
-		defer func() { rt.scope.lexical = outerLexical }()
-	}
-
 	result := emptyValue
 	obj := sourceObject
 	for obj != nil {
 		enumerateValue := emptyValue
 		obj.enumerate(false, func(name string) bool {
-			if lexical {
-				rt.scope.lexical = rt.newDeclarationStash(outerLexical)
+			into := rt.cmplEvaluateNodeExpression(into)
+			// In the case of: for (var abc in def) ...
+			if into.reference() == nil {
+				identifier := into.string()
+				// TODO Should be true or false (strictness) depending on context
+				into = toValue(getIdentifierReference(rt, rt.scope.lexical, identifier, false, -1))
 			}
-			rt.bindForTarget(into, stringValue(name), lexical, node.immutable)
+			rt.putValue(into.reference(), stringValue(name))
 			for _, node := range body {
 				value := rt.cmplEvaluateNodeStatement(node)
 				switch value.kind {
@@ -405,102 +230,6 @@ func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Valu
 	return result
 }
 
-// bindForTarget binds a loop value to a for-of/for-in loop target, which may be
-// a declared name, a destructuring pattern, or an existing assignment target.
-func (rt *runtime) bindForTarget(into nodeExpression, value Value, lexical, immutable bool) {
-	if ve, ok := into.(*nodeVariableExpression); ok {
-		if ve.target != nil {
-			mode := bindAssign
-			if lexical {
-				mode = bindLet
-				if immutable {
-					mode = bindConst
-				}
-			}
-			rt.bindPattern(ve.target, value, mode)
-			return
-		}
-		if lexical {
-			rt.declareLexicalBinding(ve.name, value, immutable)
-			return
-		}
-		ref := getIdentifierReference(rt, rt.scope.lexical, ve.name, false, at(ve.idx))
-		rt.putValue(ref, value)
-		return
-	}
-
-	// An assignment destructuring pattern, e.g. for ([a, b] of x) or
-	// for ({a} in obj). These bind against existing references.
-	switch into.(type) {
-	case *nodeArrayPattern, *nodeObjectPattern:
-		rt.bindPattern(into, value, bindAssign)
-		return
-	}
-
-	// An existing identifier or member assignment target.
-	ref := rt.cmplEvaluateNodeExpression(into)
-	if ref.reference() == nil {
-		identifier := ref.string()
-		ref = toValue(getIdentifierReference(rt, rt.scope.lexical, identifier, false, -1))
-	}
-	rt.putValue(ref.reference(), value)
-}
-
-// cmplEvaluateNodeForOfStatement evaluates a for-of loop, iterating the values
-// of an iterable. Arrays, strings and array-like objects are supported. A
-// block-scoped loop variable (for (let x of ...)) gets a fresh binding per
-// iteration.
-func (rt *runtime) cmplEvaluateNodeForOfStatement(node *nodeForInStatement) Value {
-	labels := append(rt.labels, "") //nolint:gocritic
-	rt.labels = nil
-
-	sourceValue := rt.cmplEvaluateNodeExpression(node.source).resolve()
-	switch sourceValue.kind {
-	case valueUndefined, valueNull:
-		panic(rt.panicTypeError("%v is not iterable", sourceValue))
-	}
-	values := rt.spreadIterable(sourceValue)
-
-	into := node.into
-	body := node.body
-
-	lexical := node.lexical
-	var outerLexical stasher
-	if lexical {
-		outerLexical = rt.scope.lexical
-		defer func() { rt.scope.lexical = outerLexical }()
-	}
-
-	result := emptyValue
-forLoop:
-	for _, iterationValue := range values {
-		if lexical {
-			// A fresh per-iteration environment for the loop binding(s).
-			rt.scope.lexical = rt.newDeclarationStash(outerLexical)
-		}
-		rt.bindForTarget(into, iterationValue, lexical, node.immutable)
-
-		for _, n := range body {
-			value := rt.cmplEvaluateNodeStatement(n)
-			switch value.kind {
-			case valueResult:
-				switch value.evaluateBreakContinue(labels) {
-				case resultReturn:
-					return value
-				case resultBreak:
-					break forLoop
-				case resultContinue:
-					continue forLoop
-				}
-			case valueEmpty:
-			default:
-				result = value
-			}
-		}
-	}
-	return result
-}
-
 func (rt *runtime) cmplEvaluateNodeForStatement(node *nodeForStatement) Value {
 	labels := append(rt.labels, "") //nolint:gocritic
 	rt.labels = nil
@@ -510,35 +239,10 @@ func (rt *runtime) cmplEvaluateNodeForStatement(node *nodeForStatement) Value {
 	update := node.update
 	body := node.body
 
-	// For block-scoped loop variables (for (let i ...)), each iteration runs in
-	// a fresh copy of the loop environment so that closures created in the body
-	// capture that iteration's bindings.
-	createPerIteration := func() {}
-	if len(node.lexicalBindings) > 0 {
-		outerLexical := rt.scope.lexical
-		loopEnv := rt.newDeclarationStash(outerLexical)
-		for _, name := range node.lexicalBindings {
-			loopEnv.createBinding(name, false, Value{})
-		}
-		rt.scope.lexical = loopEnv
-		defer func() { rt.scope.lexical = outerLexical }()
-
-		createPerIteration = func() {
-			prev := rt.scope.lexical.(*dclStash)
-			next := rt.newDeclarationStash(outerLexical)
-			for _, name := range node.lexicalBindings {
-				next.createBinding(name, false, prev.getBinding(name, false))
-			}
-			rt.scope.lexical = next
-		}
-	}
-
 	if initializer != nil {
 		initialResult := rt.cmplEvaluateNodeExpression(initializer)
 		initialResult.resolve() // Side-effect trigger
 	}
-
-	createPerIteration() // CreatePerIterationEnvironment, before the first test
 
 	result := emptyValue
 resultBreak:
@@ -579,7 +283,6 @@ resultBreak:
 			}
 		}
 	resultContinue:
-		createPerIteration() // copy the bindings forward for the next iteration
 		if update != nil {
 			updateResult := rt.cmplEvaluateNodeExpression(update)
 			updateResult.resolve() // Side-effect trigger

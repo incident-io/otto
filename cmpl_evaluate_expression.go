@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"math"
 	goruntime "runtime"
-	"strings"
 
-	"github.com/incident-io/otto/token"
+	"github.com/robertkrimen/otto/token"
 )
 
 func (rt *runtime) cmplEvaluateNodeExpression(node nodeExpression) Value {
@@ -54,14 +53,7 @@ func (rt *runtime) cmplEvaluateNodeExpression(node nodeExpression) Value {
 			local = rt.newDeclarationStash(local)
 		}
 
-		fnObj := rt.newNodeFunction(node, local)
-		if node.isArrow {
-			// Capture the enclosing `this` for lexical binding at call time.
-			fn := fnObj.value.(nodeFunctionObject)
-			fn.this = objectValue(rt.scope.this)
-			fnObj.value = fn
-		}
-		value := objectValue(fnObj)
+		value := objectValue(rt.newNodeFunction(node, local))
 		if node.name != "" {
 			local.createBinding(node.name, false, value)
 		}
@@ -94,27 +86,6 @@ func (rt *runtime) cmplEvaluateNodeExpression(node nodeExpression) Value {
 	case *nodeSequenceExpression:
 		return rt.cmplEvaluateNodeSequenceExpression(node)
 
-	case *nodeTemplateLiteral:
-		var b strings.Builder
-		for i, str := range node.strings {
-			b.WriteString(str)
-			if i < len(node.expressions) {
-				b.WriteString(rt.cmplEvaluateNodeExpression(node.expressions[i]).resolve().string())
-			}
-		}
-		return stringValue(b.String())
-
-	case *nodeClassLiteral:
-		return rt.cmplEvaluateNodeClassLiteral(node)
-
-	case *nodeSuperExpression:
-		// A bare `super` is only meaningful as part of super(...) or super.x,
-		// which are handled by the call and member evaluators.
-		panic(rt.panicSyntaxError("'super' keyword unexpected here"))
-
-	case *nodeTaggedTemplate:
-		return rt.cmplEvaluateNodeTaggedTemplate(node)
-
 	case *nodeThisExpression:
 		return objectValue(rt.scope.this)
 
@@ -132,13 +103,9 @@ func (rt *runtime) cmplEvaluateNodeArrayLiteral(node *nodeArrayLiteral) Value {
 	valueArray := []Value{}
 
 	for _, node := range node.value {
-		switch node := node.(type) {
-		case nil:
+		if node == nil {
 			valueArray = append(valueArray, emptyValue)
-		case *nodeSpreadExpression:
-			spread := rt.cmplEvaluateNodeExpression(node.value).resolve()
-			valueArray = append(valueArray, rt.spreadIterable(spread)...)
-		default:
+		} else {
 			valueArray = append(valueArray, rt.cmplEvaluateNodeExpression(node).resolve())
 		}
 	}
@@ -148,40 +115,7 @@ func (rt *runtime) cmplEvaluateNodeArrayLiteral(node *nodeArrayLiteral) Value {
 	return objectValue(result)
 }
 
-// spreadIterable expands a spread value (...value) into a slice of values. It
-// supports arrays, strings (by code point) and array-like objects with a
-// length property.
-func (rt *runtime) spreadIterable(value Value) []Value {
-	switch value.kind {
-	case valueString:
-		runes := []rune(value.string())
-		out := make([]Value, len(runes))
-		for i, r := range runes {
-			out[i] = stringValue(string(r))
-		}
-		return out
-	case valueObject:
-		obj := value.object()
-		length := int64(toUint32(obj.get(propertyLength)))
-		out := make([]Value, 0, length)
-		for i := range length {
-			out = append(out, obj.get(arrayIndexToString(i)))
-		}
-		return out
-	default:
-		panic(rt.panicTypeError("%v is not iterable", value))
-	}
-}
-
 func (rt *runtime) cmplEvaluateNodeAssignExpression(node *nodeAssignExpression) Value {
-	// Destructuring assignment: [a, b] = ... or ({a, b} = ...).
-	switch node.left.(type) {
-	case *nodeArrayPattern, *nodeObjectPattern:
-		rightValue := rt.cmplEvaluateNodeExpression(node.right).resolve()
-		rt.bindPattern(node.left, rightValue, bindAssign)
-		return rightValue
-	}
-
 	left := rt.cmplEvaluateNodeExpression(node.left)
 	right := rt.cmplEvaluateNodeExpression(node.right)
 	rightValue := right.resolve()
@@ -241,29 +175,16 @@ func (rt *runtime) cmplEvaluateNodeBracketExpression(node *nodeBracketExpression
 }
 
 func (rt *runtime) cmplEvaluateNodeCallExpression(node *nodeCallExpression, withArgumentList []interface{}) Value {
-	// super(...) and super.method(...) calls.
-	switch callee := node.callee.(type) {
-	case *nodeSuperExpression:
-		return rt.evaluateSuperConstructorCall(node)
-	case *nodeDotExpression:
-		if _, ok := callee.left.(*nodeSuperExpression); ok {
-			return rt.evaluateSuperMethodCall(callee.identifier, node)
-		}
-	case *nodeBracketExpression:
-		if _, ok := callee.left.(*nodeSuperExpression); ok {
-			key := rt.cmplEvaluateNodeExpression(callee.member).resolve().string()
-			return rt.evaluateSuperMethodCall(key, node)
-		}
-	}
-
 	this := Value{}
 	callee := rt.cmplEvaluateNodeExpression(node.callee)
 
-	var argumentList []Value
+	argumentList := []Value{}
 	if withArgumentList != nil {
 		argumentList = rt.toValueArray(withArgumentList...)
 	} else {
-		argumentList = rt.evaluateArgumentList(node.argumentList)
+		for _, argumentNode := range node.argumentList {
+			argumentList = append(argumentList, rt.cmplEvaluateNodeExpression(argumentNode).resolve())
+		}
 	}
 
 	eval := false // Whether this call is a (candidate for) direct call to eval
@@ -322,45 +243,7 @@ func (rt *runtime) cmplEvaluateNodeConditionalExpression(node *nodeConditionalEx
 	return rt.cmplEvaluateNodeExpression(node.alternate)
 }
 
-func (rt *runtime) cmplEvaluateNodeTaggedTemplate(node *nodeTaggedTemplate) Value {
-	tag := rt.cmplEvaluateNodeExpression(node.tag)
-
-	// A tag of the form obj.fn`...` is called with `this` = obj.
-	this := Value{}
-	if rf, ok := tag.reference().(*propertyReference); ok && rf != nil {
-		this = objectValue(rf.base)
-	}
-
-	fn := tag.resolve()
-	if !fn.IsFunction() {
-		panic(rt.panicTypeError("Tagged template tag is not a function"))
-	}
-
-	// Build the strings array, carrying the raw segments on its `raw` property.
-	cooked := make([]Value, len(node.quasis))
-	for i, s := range node.quasis {
-		cooked[i] = stringValue(s)
-	}
-	stringsArray := rt.newArrayOf(cooked)
-	raw := make([]Value, len(node.raw))
-	for i, s := range node.raw {
-		raw[i] = stringValue(s)
-	}
-	stringsArray.defineProperty("raw", objectValue(rt.newArrayOf(raw)), 0o000, false)
-
-	argumentList := []Value{objectValue(stringsArray)}
-	for _, expr := range node.expressions {
-		argumentList = append(argumentList, rt.cmplEvaluateNodeExpression(expr).resolve())
-	}
-
-	return fn.object().call(this, argumentList, false, frame{})
-}
-
 func (rt *runtime) cmplEvaluateNodeDotExpression(node *nodeDotExpression) Value {
-	if _, ok := node.left.(*nodeSuperExpression); ok {
-		// super.x: read the member from the parent prototype.
-		return rt.superPrototype().get(node.identifier)
-	}
 	target := rt.cmplEvaluateNodeExpression(node.left)
 	targetValue := target.resolve()
 	// TODO Pass in base value as-is, and defer toObject till later?
@@ -418,25 +301,21 @@ func (rt *runtime) cmplEvaluateNodeNewExpression(node *nodeNewExpression) Value 
 func (rt *runtime) cmplEvaluateNodeObjectLiteral(node *nodeObjectLiteral) Value {
 	result := rt.newObject()
 	for _, prop := range node.value {
-		key := prop.key
-		if prop.keyExpression != nil {
-			key = rt.cmplEvaluateNodeExpression(prop.keyExpression).resolve().string()
-		}
 		switch prop.kind {
 		case "value":
-			result.defineProperty(key, rt.cmplEvaluateNodeExpression(prop.value).resolve(), 0o111, false)
+			result.defineProperty(prop.key, rt.cmplEvaluateNodeExpression(prop.value).resolve(), 0o111, false)
 		case "get":
 			getter := rt.newNodeFunction(prop.value.(*nodeFunctionLiteral), rt.scope.lexical)
 			descriptor := property{}
 			descriptor.mode = 0o211
 			descriptor.value = propertyGetSet{getter, nil}
-			result.defineOwnProperty(key, descriptor, false)
+			result.defineOwnProperty(prop.key, descriptor, false)
 		case "set":
 			setter := rt.newNodeFunction(prop.value.(*nodeFunctionLiteral), rt.scope.lexical)
 			descriptor := property{}
 			descriptor.mode = 0o211
 			descriptor.value = propertyGetSet{nil, setter}
-			result.defineOwnProperty(key, descriptor, false)
+			result.defineOwnProperty(prop.key, descriptor, false)
 		default:
 			panic(fmt.Sprintf("unknown node object literal property kind %T", prop.kind))
 		}
@@ -553,16 +432,6 @@ func (rt *runtime) cmplEvaluateNodeUnaryExpression(node *nodeUnaryExpression) Va
 }
 
 func (rt *runtime) cmplEvaluateNodeVariableExpression(node *nodeVariableExpression) Value {
-	if node.target != nil {
-		// var destructuring: the bound names are already hoisted, so assign
-		// into them.
-		value := Value{}
-		if node.initializer != nil {
-			value = rt.cmplEvaluateNodeExpression(node.initializer).resolve()
-		}
-		rt.bindPattern(node.target, value, bindAssign)
-		return emptyValue
-	}
 	if node.initializer != nil {
 		// FIXME If reference is nil
 		left := getIdentifierReference(rt, rt.scope.lexical, node.name, false, at(node.idx))
