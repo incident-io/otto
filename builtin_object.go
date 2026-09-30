@@ -2,6 +2,7 @@ package otto
 
 import (
 	"fmt"
+	"strconv"
 )
 
 // Object
