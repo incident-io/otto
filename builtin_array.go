@@ -692,6 +692,7 @@ func builtinArrayFind(call FunctionCall) Value {
 	length := int64(toUint32(thisObject.get(propertyLength)))
 	callThis := call.Argument(1)
 	for index := range length {
+		call.runtime.checkInterrupt()
 		key := arrayIndexToString(index)
 		value := thisObject.get(key)
 		if predicate.call(call.runtime, callThis, value, int64Value(index), this).bool() {
@@ -711,6 +712,7 @@ func builtinArrayFindIndex(call FunctionCall) Value {
 	length := int64(toUint32(thisObject.get(propertyLength)))
 	callThis := call.Argument(1)
 	for index := range length {
+		call.runtime.checkInterrupt()
 		key := arrayIndexToString(index)
 		value := thisObject.get(key)
 		if predicate.call(call.runtime, callThis, value, int64Value(index), this).bool() {
@@ -730,6 +732,7 @@ func builtinArrayFindLast(call FunctionCall) Value {
 	length := int64(toUint32(thisObject.get(propertyLength)))
 	callThis := call.Argument(1)
 	for index := length - 1; index >= 0; index-- {
+		call.runtime.checkInterrupt()
 		key := arrayIndexToString(index)
 		value := thisObject.get(key)
 		if predicate.call(call.runtime, callThis, value, int64Value(index), this).bool() {
@@ -749,6 +752,7 @@ func builtinArrayFindLastIndex(call FunctionCall) Value {
 	length := int64(toUint32(thisObject.get(propertyLength)))
 	callThis := call.Argument(1)
 	for index := length - 1; index >= 0; index-- {
+		call.runtime.checkInterrupt()
 		key := arrayIndexToString(index)
 		value := thisObject.get(key)
 		if predicate.call(call.runtime, callThis, value, int64Value(index), this).bool() {
@@ -800,6 +804,7 @@ func builtinArrayIncludes(call FunctionCall) Value {
 	}
 
 	for ; index < length; index++ {
+		call.runtime.checkInterrupt()
 		value := thisObject.get(arrayIndexToString(index))
 		if arraySameValueZero(searchElement, value) {
 			return trueValue
@@ -821,6 +826,7 @@ func builtinArrayFill(call FunctionCall) Value {
 	}
 
 	for index := start; index < end; index++ {
+		call.runtime.checkInterrupt()
 		thisObject.put(arrayIndexToString(index), value, true)
 	}
 	return this
@@ -852,6 +858,7 @@ func builtinArrayCopyWithin(call FunctionCall) Value {
 	}
 
 	for ; count > 0; count-- {
+		call.runtime.checkInterrupt()
 		fromKey := arrayIndexToString(from)
 		toKey := arrayIndexToString(to)
 		if thisObject.hasProperty(fromKey) {
@@ -870,6 +877,7 @@ func builtinArrayCopyWithin(call FunctionCall) Value {
 func arrayFlatten(target *[]Value, source *object, depth float64) {
 	length := int64(toUint32(source.get(propertyLength)))
 	for index := range length {
+		source.runtime.checkInterrupt()
 		key := arrayIndexToString(index)
 		if !source.hasProperty(key) {
 			continue
@@ -908,6 +916,7 @@ func builtinArrayFlatMap(call FunctionCall) Value {
 
 	values := []Value{}
 	for index := range length {
+		call.runtime.checkInterrupt()
 		key := arrayIndexToString(index)
 		if !thisObject.hasProperty(key) {
 			continue
@@ -962,14 +971,16 @@ func builtinArrayFrom(call FunctionCall) Value {
 	} else {
 		obj := call.runtime.toObject(items)
 		length := int64(toUint32(obj.get(propertyLength)))
-		source = make([]Value, length)
+		source = make([]Value, 0, preallocation(length))
 		for index := range length {
-			source[index] = obj.get(arrayIndexToString(index))
+			call.runtime.checkInterrupt()
+			source = append(source, obj.get(arrayIndexToString(index)))
 		}
 	}
 
 	if hasMapFn {
 		for index, value := range source {
+			call.runtime.checkInterrupt()
 			source[index] = mapFn.call(call.runtime, callThis, value, int64Value(int64(index)))
 		}
 	}

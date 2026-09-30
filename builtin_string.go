@@ -57,11 +57,13 @@ func builtinStringRaw(call FunctionCall) Value {
 
 	var b strings.Builder
 	for i := range length {
+		call.runtime.checkInterrupt()
 		b.WriteString(rawObject.get(arrayIndexToString(i)).string())
 		// Interleave the substitution that follows each segment but the last.
 		if i+1 < length && int(i)+1 < len(call.ArgumentList) {
 			b.WriteString(call.ArgumentList[i+1].string())
 		}
+		call.runtime.checkStringLength(b.Len())
 	}
 	return stringValue(b.String())
 }
@@ -549,6 +551,10 @@ func builtinStringRepeat(call FunctionCall) Value {
 	if count < 0 || math.IsInf(count, 1) {
 		panic(call.runtime.panicRangeError("Invalid count value"))
 	}
+	if target == "" || count == 0 {
+		return stringValue("")
+	}
+	call.runtime.checkStringLengthFloat(float64(len(target)) * count)
 	return stringValue(strings.Repeat(target, int(count)))
 }
 
@@ -557,9 +563,9 @@ func builtinStringRepeat(call FunctionCall) Value {
 func stringPad(call FunctionCall, atStart bool) Value {
 	checkObjectCoercible(call.runtime, call.This)
 	target := call.This.string()
-	maxLength := int(toIntegerFloat(call.Argument(0)))
+	maxLengthFloat := toIntegerFloat(call.Argument(0))
 	targetRunes := []rune(target)
-	if maxLength <= len(targetRunes) {
+	if maxLengthFloat <= float64(len(targetRunes)) {
 		return stringValue(target)
 	}
 
@@ -571,18 +577,23 @@ func stringPad(call FunctionCall, atStart bool) Value {
 		return stringValue(target)
 	}
 
+	// Every rune is at least one byte, so maxLength runes is a lower bound
+	// on the result's size in bytes.
+	call.runtime.checkStringLengthFloat(maxLengthFloat)
 	fillRunes := []rune(fill)
-	padLen := maxLength - len(targetRunes)
-	padding := make([]rune, 0, padLen)
+	padLen := int(maxLengthFloat) - len(targetRunes)
+	padding := make([]rune, 0, preallocation(int64(padLen)))
 	for len(padding) < padLen {
+		call.runtime.checkInterrupt()
 		padding = append(padding, fillRunes...)
 	}
-	padding = padding[:padLen]
+	pad := string(padding[:padLen])
+	call.runtime.checkStringLength(len(target) + len(pad))
 
 	if atStart {
-		return stringValue(string(padding) + target)
+		return stringValue(pad + target)
 	}
-	return stringValue(target + string(padding))
+	return stringValue(target + pad)
 }
 
 func builtinStringPadStart(call FunctionCall) Value {
@@ -666,13 +677,16 @@ func builtinStringReplaceAll(call FunctionCall) Value {
 			startIndex := utf8.RuneCountInString(targetStr[0:match[0]])
 			argumentList := []Value{stringValue(matched), intValue(startIndex), stringValue(targetStr)}
 			replacement := replace.call(Value{}, argumentList, false, nativeFrame).string()
+			call.runtime.checkStringLength(len(result) + len(replacement))
 			result = append(result, []byte(replacement)...)
 			lastIndex = match[1]
 		}
 	} else {
 		replace := []byte(replaceValue.string())
 		for _, match := range found {
+			call.runtime.checkInterrupt()
 			result = builtinStringFindAndReplaceString(result, lastIndex, []int{match[0], match[1]}, target, replace)
+			call.runtime.checkStringLength(len(result))
 			lastIndex = match[1]
 		}
 	}

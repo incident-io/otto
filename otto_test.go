@@ -1789,6 +1789,58 @@ func TestOttoInterrupt(t *testing.T) {
 			script: `new Array(4294967295).join("")`,
 		},
 		{
+			name:   "array-find",
+			script: `new Array(4294967295).find(function() { return false })`,
+		},
+		{
+			name:   "array-find-index",
+			script: `new Array(4294967295).findIndex(function() { return false })`,
+		},
+		{
+			name:   "array-find-last",
+			script: `new Array(4294967295).findLast(function() { return false })`,
+		},
+		{
+			name:   "array-find-last-index",
+			script: `new Array(4294967295).findLastIndex(function() { return false })`,
+		},
+		{
+			name:   "array-includes",
+			script: `new Array(4294967295).includes(1)`,
+		},
+		{
+			name:   "array-fill",
+			script: `({length: 4294967295, fill: Array.prototype.fill}).fill(0)`,
+		},
+		{
+			name:   "array-copy-within",
+			script: `({length: 4294967295, 0: 1, copyWithin: Array.prototype.copyWithin}).copyWithin(1, 0)`,
+		},
+		{
+			name:   "array-flat",
+			script: `Array.prototype.flat.call({length: 4294967295})`,
+		},
+		{
+			name:   "array-flat-map",
+			script: `Array.prototype.flatMap.call({length: 4294967295}, function(x) { return x })`,
+		},
+		{
+			name:   "array-from",
+			script: `Array.from({length: 4294967295})`,
+		},
+		{
+			name:   "object-from-entries",
+			script: `Object.fromEntries({length: 4294967295})`,
+		},
+		{
+			name:   "string-raw",
+			script: `String.raw({raw: {length: 4294967295}})`,
+		},
+		{
+			name:   "string-pad-start",
+			script: `"".padStart(2147483647, "x")`,
+		},
+		{
 			name:   "array-to-locale-string",
 			script: `new Array(4294967295).toLocaleString()`,
 		},
@@ -1941,6 +1993,14 @@ func TestOttoStringLengthLimit(t *testing.T) {
 		{name: "string-replace", script: big + `new Array(1 << 10).join("a").replace(/a/g, big)`},
 		{name: "string-replace-function", script: big + `new Array(1 << 10).join("a").replace(/a/g, function() { return big })`},
 		{name: "json-stringify", script: big + `JSON.stringify([big, big, big])`},
+		{name: "string-repeat", script: big + `big.repeat(3)`},
+		{name: "string-repeat-huge", script: big + `"x".repeat(1e300)`},
+		{name: "string-pad-start", script: big + `big.padStart(3 << 19)`},
+		{name: "string-pad-end", script: big + `big.padEnd(3 << 19, big)`},
+		{name: "string-pad-huge", script: big + `"".padStart(1e300)`},
+		{name: "string-replace-all", script: big + `new Array(1 << 10).join("a").replaceAll("a", big)`},
+		{name: "string-replace-all-function", script: big + `new Array(1 << 10).join("a").replaceAll("a", function() { return big })`},
+		{name: "string-raw", script: big + `String.raw({raw: [big, big, big]})`},
 		{name: "json-stringify-keys", script: big + `var o = {}; o[big] = 1; o[big + "y"] = 2; o[big + "z"] = 3; JSON.stringify(o)`},
 	}
 
