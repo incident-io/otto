@@ -881,11 +881,23 @@ func (rt *runtime) newGoArray(value reflect.Value) *object {
 }
 
 func (rt *runtime) parse(filename string, src, sm interface{}) (*ast.Program, error) {
+	defer unwrapInterruptPanic()
 	return parser.ParseFileWithSourceMap(nil, filename, src, sm, 0, rt.parserOptions()...)
 }
 
+// unwrapInterruptPanic re-panics with the value the Interrupt function
+// panicked with, for code that runs it outside catchPanic.
+func unwrapInterruptPanic() {
+	if caught := recover(); caught != nil {
+		if halt, ok := caught.(*interruptPanic); ok {
+			panic(halt.value)
+		}
+		panic(caught)
+	}
+}
+
 func (rt *runtime) cmplParse(filename string, src, sm interface{}) (*nodeProgram, error) {
-	program, err := parser.ParseFileWithSourceMap(nil, filename, src, sm, 0, rt.parserOptions()...)
+	program, err := rt.parse(filename, src, sm)
 	if err != nil {
 		return nil, err
 	}

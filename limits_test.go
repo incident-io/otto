@@ -43,6 +43,24 @@ func runWithDeadline(t *testing.T, vm *Otto, script string, timeout time.Duratio
 
 var errHalted = errors.New("halted")
 
+func TestParseInterrupt(t *testing.T) {
+	t.Parallel()
+	script := strings.Repeat("1,", 1<<22) + "1"
+	run := map[string]func(vm *Otto){
+		"run":     func(vm *Otto) { _, _ = vm.Run(script) },
+		"compile": func(vm *Otto) { _, _ = vm.Compile("", script) },
+	}
+	for name, fn := range run {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			vm := New()
+			vm.Interrupt = make(chan func(), 1)
+			vm.Interrupt <- func() { panic(errHalted) }
+			require.PanicsWithValue(t, errHalted, func() { fn(vm) })
+		})
+	}
+}
+
 func TestGoSliceLength(t *testing.T) {
 	for _, length := range []string{"-1", "NaN", "Infinity", "1.5", "4e9", "4294967295"} {
 		t.Run(length, func(t *testing.T) {
