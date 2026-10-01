@@ -4,7 +4,7 @@ func (rt *runtime) newErrorObject(name string, message Value, stackFramesToPop i
 	obj := rt.newClassObject(classErrorName)
 	if message.IsDefined() {
 		err := newError(rt, name, stackFramesToPop, "%s", message.string())
-		obj.defineProperty("message", err.messageValue(), 0o111, false)
+		obj.defineProperty("message", err.messageValue(), 0o101, false)
 		obj.value = err
 	} else {
 		obj.value = newError(rt, name, stackFramesToPop)
@@ -25,7 +25,7 @@ func (rt *runtime) newErrorObject(name string, message Value, stackFramesToPop i
 
 func (rt *runtime) newErrorObjectError(err ottoError) *object {
 	obj := rt.newClassObject(classErrorName)
-	obj.defineProperty("message", err.messageValue(), 0o111, false)
+	obj.defineProperty("message", err.messageValue(), 0o101, false)
 	obj.value = err
 	switch err.name {
 	case "EvalError":

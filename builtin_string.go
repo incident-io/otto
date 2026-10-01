@@ -3,6 +3,7 @@ package otto
 import (
 	"bytes"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -10,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/incident-io/otto/internal/regexp"
+	"golang.org/x/text/unicode/norm"
 )
 
 // String
@@ -45,6 +47,25 @@ func builtinStringFromCharCode(call FunctionCall) Value {
 	return string16Value(chrList)
 }
 
+func builtinStringFromCodePoint(call FunctionCall) Value {
+	chrList := make([]uint16, 0, len(call.ArgumentList))
+	for index, value := range call.ArgumentList {
+		call.runtime.pollInterrupt(index)
+		number := value.float64()
+		if number != math.Trunc(number) || number < 0 || number > unicode.MaxRune {
+			panic(call.runtime.panicRangeError("Invalid code point %v", value))
+		}
+		chr := rune(number)
+		if r1, r2 := utf16.EncodeRune(chr); r1 != unicode.ReplacementChar {
+			chrList = append(chrList, uint16(r1), uint16(r2))
+		} else {
+			chrList = append(chrList, uint16(chr))
+		}
+	}
+	call.runtime.allocateString(2 * len(chrList))
+	return string16Value(chrList)
+}
+
 func builtinStringRaw(call FunctionCall) Value {
 	template := call.Argument(0)
 	if !template.IsObject() {
@@ -73,7 +94,7 @@ func builtinStringRaw(call FunctionCall) Value {
 func builtinStringCharAt(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
 	idx := int(call.Argument(0).number().int64)
-	chr := stringAt(call.This.object().stringValue(), idx)
+	chr := stringAt(newStringObject(call.This.string()), idx)
 	if chr == utf8.RuneError {
 		return stringValue("")
 	}
@@ -83,11 +104,59 @@ func builtinStringCharAt(call FunctionCall) Value {
 func builtinStringCharCodeAt(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
 	idx := int(call.Argument(0).number().int64)
-	chr := stringAt(call.This.object().stringValue(), idx)
+	chr := stringAt(newStringObject(call.This.string()), idx)
 	if chr == utf8.RuneError {
 		return NaNValue()
 	}
 	return uint16Value(uint16(chr))
+}
+
+func builtinStringCodePointAt(call FunctionCall) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	str := newStringObject(call.This.string())
+	idx := int(call.Argument(0).number().int64)
+	if idx < 0 || idx >= str.Length() {
+		return Value{}
+	}
+	chr := str.At(idx)
+	if chr >= 0xD800 && chr <= 0xDBFF && idx+1 < str.Length() {
+		if pair := utf16.DecodeRune(chr, str.At(idx+1)); pair != unicode.ReplacementChar {
+			return intValue(int(pair))
+		}
+	}
+	return intValue(int(chr))
+}
+
+func builtinStringNormalize(call FunctionCall) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	str := call.This.string()
+	form := norm.NFC
+	if value := call.Argument(0); value.IsDefined() {
+		switch value.string() {
+		case "NFC":
+		case "NFD":
+			form = norm.NFD
+		case "NFKC":
+			form = norm.NFKC
+		case "NFKD":
+			form = norm.NFKD
+		default:
+			panic(call.runtime.panicRangeError("The normalization form should be one of NFC, NFD, NFKC, NFKD."))
+		}
+	}
+	if form.IsNormalString(str) {
+		return stringValue(str)
+	}
+	var iter norm.Iter
+	iter.InitString(form, str)
+	var result []byte
+	for i := 0; !iter.Done(); i++ {
+		call.runtime.pollInterrupt(i)
+		result = append(result, iter.Next()...)
+		call.runtime.checkStringLength(len(result))
+	}
+	call.runtime.allocateString(len(result))
+	return stringValue(string(result))
 }
 
 func builtinStringConcat(call FunctionCall) Value {
@@ -190,7 +259,7 @@ func builtinStringMatch(call FunctionCall) Value {
 		if !match {
 			return nullValue
 		}
-		return objectValue(execResultToArray(call.runtime, target, result))
+		return objectValue(execResultToArray(call.runtime, target, result, matcher.regExpValue().regularExpression.SubexpNames()))
 	}
 
 	result := call.runtime.hookRegExp(matcher.regExpValue().regularExpression).FindAllStringIndex(target, -1)
@@ -208,15 +277,22 @@ func builtinStringMatch(call FunctionCall) Value {
 	return objectValue(call.runtime.newArrayOf(valueArray))
 }
 
-var builtinStringReplaceRegexp = regexp.MustCompile("\\$(?:[\\$\\&\\'\\`1-9]|0[1-9]|[1-9][0-9])")
+var (
+	builtinStringReplaceRegexp      = regexp.MustCompile("\\$(?:[\\$\\&\\'\\`1-9]|0[1-9]|[1-9][0-9])")
+	builtinStringReplaceNamedRegexp = regexp.MustCompile("\\$(?:[\\$\\&\\'\\`1-9]|0[1-9]|[1-9][0-9]|<[^>]*>)")
+)
 
-func builtinStringFindAndReplaceString(input []byte, lastIndex int, match []int, target []byte, replaceValue []byte) []byte {
+func builtinStringFindAndReplaceString(input []byte, lastIndex int, match []int, target []byte, replaceValue []byte, names []string) []byte {
 	matchCount := len(match) / 2
 	output := input
+	pattern := builtinStringReplaceRegexp
+	if slices.ContainsFunc(names, func(name string) bool { return name != "" }) {
+		pattern = builtinStringReplaceNamedRegexp
+	}
 	if match[0] != lastIndex {
 		output = append(output, target[lastIndex:match[0]]...)
 	}
-	replacement := builtinStringReplaceRegexp.ReplaceAllFunc(replaceValue, func(part []byte) []byte {
+	replacement := pattern.ReplaceAllFunc(replaceValue, func(part []byte) []byte {
 		// TODO Check if match[0] or match[1] can be -1 in this scenario
 		switch part[1] {
 		case '$':
@@ -227,6 +303,12 @@ func builtinStringFindAndReplaceString(input []byte, lastIndex int, match []int,
 			return target[:match[0]]
 		case '\'':
 			return target[match[1]:]
+		case '<':
+			matchNumber := slices.Index(names, string(part[2:len(part)-1]))
+			if matchNumber < 1 || 2*matchNumber >= len(match) || match[2*matchNumber] == -1 {
+				return nil
+			}
+			return target[match[2*matchNumber]:match[2*matchNumber+1]]
 		}
 		matchNumberParse, err := strconv.ParseInt(string(part[1:]), 10, 64)
 		if err != nil {
@@ -305,7 +387,7 @@ func builtinStringReplace(call FunctionCall) Value {
 		replace := []byte(replaceValue.string())
 		for _, match := range found {
 			call.runtime.checkInterrupt()
-			result = builtinStringFindAndReplaceString(result, lastIndex, match, target, replace)
+			result = builtinStringFindAndReplaceString(result, lastIndex, match, target, replace, search.SubexpNames())
 			call.runtime.checkStringLength(len(result))
 			lastIndex = match[1]
 		}
@@ -575,8 +657,8 @@ func stringPad(call FunctionCall, atStart bool) Value {
 	checkObjectCoercible(call.runtime, call.This)
 	target := call.This.string()
 	maxLengthFloat := toIntegerFloat(call.Argument(0))
-	targetRunes := []rune(target)
-	if maxLengthFloat <= float64(len(targetRunes)) {
+	targetLength := newStringObject(target).Length()
+	if maxLengthFloat <= float64(targetLength) {
 		return stringValue(target)
 	}
 
@@ -588,19 +670,19 @@ func stringPad(call FunctionCall, atStart bool) Value {
 		return stringValue(target)
 	}
 
-	// Every rune is at least one byte, so maxLength runes is a lower bound
-	// on the result's size in bytes.
+	// Every UTF-16 code unit is at least one byte, so maxLength units is a
+	// lower bound on the result's size in bytes.
 	call.runtime.checkStringLengthFloat(maxLengthFloat)
-	fillRunes := []rune(fill)
-	padLen := int(maxLengthFloat) - len(targetRunes)
-	padding := make([]rune, 0, preallocation(int64(padLen)))
+	fillUnits := utf16.Encode([]rune(fill))
+	padLen := int(maxLengthFloat) - targetLength
+	padding := make([]uint16, 0, preallocation(int64(padLen)))
 	for len(padding) < padLen {
 		call.runtime.checkInterrupt()
-		call.runtime.allocateElement(int64(len(padding)+len(fillRunes)-1), 4)
-		call.runtime.allocateN(int64(len(fillRunes)-1), 4)
-		padding = append(padding, fillRunes...)
+		call.runtime.allocateElement(int64(len(padding)+len(fillUnits)-1), 2)
+		call.runtime.allocateN(int64(len(fillUnits)-1), 2)
+		padding = append(padding, fillUnits...)
 	}
-	pad := string(padding[:padLen])
+	pad := string(utf16.Decode(padding[:padLen]))
 	call.runtime.allocateString(len(target) + len(pad))
 
 	if atStart {
@@ -619,7 +701,7 @@ func builtinStringPadEnd(call FunctionCall) Value {
 
 func builtinStringAt(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
-	str := call.This.object().stringValue()
+	str := newStringObject(call.This.string())
 	length := str.Length()
 	idx := int(toIntegerFloat(call.Argument(0)))
 	if idx < 0 {
@@ -698,7 +780,7 @@ func builtinStringReplaceAll(call FunctionCall) Value {
 		replace := []byte(replaceValue.string())
 		for _, match := range found {
 			call.runtime.checkInterrupt()
-			result = builtinStringFindAndReplaceString(result, lastIndex, []int{match[0], match[1]}, target, replace)
+			result = builtinStringFindAndReplaceString(result, lastIndex, []int{match[0], match[1]}, target, replace, nil)
 			call.runtime.checkStringLength(len(result))
 			lastIndex = match[1]
 		}

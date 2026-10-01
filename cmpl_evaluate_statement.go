@@ -627,7 +627,7 @@ func (rt *runtime) cmplEvaluateNodeSwitchStatement(node *nodeSwitchStatement) Va
 					case resultReturn:
 						return value
 					case resultBreak:
-						return emptyValue
+						return result
 					}
 				case valueEmpty:
 				default:
@@ -654,7 +654,9 @@ func (rt *runtime) cmplEvaluateNodeTryStatement(node *nodeTryStatement) Value {
 		// TODO If necessary, convert TypeError<runtime> => TypeError
 		// That, is, such errors can be thrown despite not being JavaScript "native"
 		// strict = false
-		rt.scope.lexical.setValue(node.catch.parameter, tryCatchValue, false)
+		if node.catch.parameter != "" {
+			rt.scope.lexical.setValue(node.catch.parameter, tryCatchValue, false)
+		}
 
 		// FIXME node.CatchParameter
 		// FIXME node.Catch

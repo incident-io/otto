@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/incident-io/otto/ast"
@@ -289,7 +290,12 @@ func (p *parser) scan() (tkn token.Token, literal string, idx file.Idx) { //noli
 					insertSemicolon = true
 				}
 			case '*':
-				tkn = p.switch2(token.MULTIPLY, token.MULTIPLY_ASSIGN)
+				if p.chr == '*' {
+					p.read()
+					tkn = p.switch2(token.EXPONENT, token.EXPONENT_ASSIGN)
+				} else {
+					tkn = p.switch2(token.MULTIPLY, token.MULTIPLY_ASSIGN)
+				}
 			case '/':
 				switch p.chr {
 				case '/':
@@ -344,13 +350,31 @@ func (p *parser) scan() (tkn token.Token, literal string, idx file.Idx) { //noli
 					tkn = p.switch2(token.AND_NOT, token.AND_NOT_ASSIGN)
 				} else {
 					tkn = p.switch3(token.AND, token.AND_ASSIGN, '&', token.LOGICAL_AND)
+					if tkn == token.LOGICAL_AND && p.chr == '=' {
+						p.read()
+						tkn = token.LOGICAL_AND_ASSIGN
+					}
 				}
 			case '|':
 				tkn = p.switch3(token.OR, token.OR_ASSIGN, '|', token.LOGICAL_OR)
+				if tkn == token.LOGICAL_OR && p.chr == '=' {
+					p.read()
+					tkn = token.LOGICAL_OR_ASSIGN
+				}
 			case '~':
 				tkn = token.BITWISE_NOT
 			case '?':
-				tkn = token.QUESTION_MARK
+				switch {
+				case p.chr == '?':
+					p.read()
+					tkn = p.switch2(token.NULLISH, token.NULLISH_ASSIGN)
+				case p.chr == '.' && (p.offset >= p.length || !isDecimalDigit(rune(p.str[p.offset]))):
+					// "a?.5:b" is a conditional, not an optional chain.
+					p.read()
+					tkn = token.QUESTION_DOT
+				default:
+					tkn = token.QUESTION_MARK
+				}
 			case '"', '\'':
 				insertSemicolon = true
 				tkn = token.STRING
@@ -576,8 +600,19 @@ func (p *parser) skipWhiteSpace() {
 	}
 }
 
-func (p *parser) scanMantissa(base int) {
-	for digitValue(p.chr) < base {
+// scanMantissa consumes digits in base, along with any numeric separators
+// ("1_000") that sit between two digits. afterDigit reports whether a digit
+// immediately precedes the current character.
+func (p *parser) scanMantissa(base int, afterDigit bool) {
+	for {
+		switch {
+		case digitValue(p.chr) < base:
+			afterDigit = true
+		case p.chr == '_' && afterDigit && p.offset < p.length && digitValue(rune(p.str[p.offset])) < base:
+			afterDigit = false
+		default:
+			return
+		}
 		p.read()
 	}
 }
@@ -598,6 +633,16 @@ func (p *parser) scanEscape(quote rune) {
 		length, base = 2, 16
 	case 'u':
 		p.read()
+		if p.chr == '{' {
+			// \u{...}: the digits are validated by parseStringLiteral.
+			for p.chr != '}' && p.chr != quote && p.chr >= 0 && !isLineTerminator(p.chr) {
+				p.read()
+			}
+			if p.chr == '}' {
+				p.read()
+			}
+			return
+		}
 		length, base = 4, 16
 	default:
 		p.read() // Always make progress
@@ -776,6 +821,7 @@ func hex2decimal(chr byte) (rune, bool) {
 }
 
 func parseNumberLiteral(literal string) (value interface{}, err error) { //nolint:nonamedreturns
+	literal = strings.ReplaceAll(literal, "_", "")
 	// TODO Is Uint okay? What about -MAX_UINT
 	value, err = strconv.ParseInt(literal, 0, 64)
 	if err == nil {
@@ -796,17 +842,26 @@ func parseNumberLiteral(literal string) (value interface{}, err error) { //nolin
 	// Need to understand what this was trying to do?
 	err = parseIntErr
 
-	if errors.Is(err, strconv.ErrRange) {
-		if len(literal) > 2 && literal[0] == '0' && (literal[1] == 'X' || literal[1] == 'x') {
+	if errors.Is(err, strconv.ErrRange) && len(literal) > 2 && literal[0] == '0' {
+		base := 0
+		switch literal[1] {
+		case 'x', 'X':
+			base = 16
+		case 'o', 'O':
+			base = 8
+		case 'b', 'B':
+			base = 2
+		}
+		if base != 0 {
 			// Could just be a very large number (e.g. 0x8000000000000000)
 			var value float64
 			literal = literal[2:]
 			for _, chr := range literal {
 				digit := digitValue(chr)
-				if digit >= 16 {
-					return nil, fmt.Errorf("illegal numeric literal: %v (>= 16)", digit)
+				if digit >= base {
+					return nil, fmt.Errorf("illegal numeric literal: %v (>= %d)", digit, base)
 				}
-				value = value*16 + float64(digit)
+				value = value*float64(base) + float64(digit)
 			}
 			return value, nil
 		}
@@ -870,7 +925,27 @@ func parseStringLiteral(literal string) (string, error) {
 				value = '\t'
 			case 'v':
 				value = '\v'
-			case 'x', 'u':
+			case 'u':
+				if len(str) > 0 && str[0] == '{' {
+					end := strings.IndexByte(str, '}')
+					if end < 2 || end > 7 {
+						return "", fmt.Errorf("invalid escape: \\u%s", str[:min(len(str), 8)])
+					}
+					for j := 1; j < end; j++ {
+						decimal, ok := hex2decimal(str[j])
+						if !ok {
+							return "", fmt.Errorf("invalid escape: \\u%s", str[:end+1])
+						}
+						value = value<<4 | decimal
+					}
+					if value > utf8.MaxRune {
+						return "", fmt.Errorf("undefined Unicode code-point: \\u%s", str[:end+1])
+					}
+					str = str[end+1:]
+					break
+				}
+				fallthrough
+			case 'x':
 				size := 0
 				switch chr {
 				case 'x':
@@ -894,6 +969,15 @@ func parseStringLiteral(literal string) (string, error) {
 				}
 				if value > utf8.MaxRune {
 					panic("value > utf8.MaxRune")
+				}
+				if utf16.IsSurrogate(value) && len(str) >= 6 && str[0] == '\\' && str[1] == 'u' {
+					// A surrogate pair written as two escapes, e.g. "\uD83D\uDE00".
+					if low, err := strconv.ParseUint(str[2:6], 16, 16); err == nil {
+						if pair := utf16.DecodeRune(value, rune(low)); pair != utf8.RuneError {
+							value = pair
+							str = str[6:]
+						}
+					}
 				}
 			case '0':
 				if len(str) == 0 || '0' > str[0] || str[0] > '7' {
@@ -946,7 +1030,7 @@ func (p *parser) scanNumericLiteral(decimalPoint bool) (token.Token, string) {
 
 	if decimalPoint {
 		offset--
-		p.scanMantissa(10)
+		p.scanMantissa(10, false)
 		goto exponent
 	}
 
@@ -962,13 +1046,25 @@ func (p *parser) scanNumericLiteral(decimalPoint bool) (token.Token, string) {
 			} else {
 				return token.ILLEGAL, p.str[chrOffset:p.chrOffset]
 			}
-			p.scanMantissa(16)
+			p.scanMantissa(16, true)
 
 			if p.chrOffset-chrOffset <= 2 {
 				// Only "0x" or "0X"
 				p.error(0, "Illegal hexadecimal number")
 			}
 
+			goto hexadecimal
+		case 'b', 'B', 'o', 'O':
+			base := 2
+			if p.chr == 'o' || p.chr == 'O' {
+				base = 8
+			}
+			p.read()
+			if !isDigit(p.chr, base) {
+				return token.ILLEGAL, p.str[chrOffset:p.chrOffset]
+			}
+			p.read()
+			p.scanMantissa(base, true)
 			goto hexadecimal
 		case '.':
 			// Float
@@ -978,7 +1074,9 @@ func (p *parser) scanNumericLiteral(decimalPoint bool) (token.Token, string) {
 			if p.chr == 'e' || p.chr == 'E' {
 				goto exponent
 			}
-			p.scanMantissa(8)
+			for isDigit(p.chr, 8) {
+				p.read()
+			}
 			if p.chr == '8' || p.chr == '9' {
 				return token.ILLEGAL, p.str[chrOffset:p.chrOffset]
 			}
@@ -986,12 +1084,12 @@ func (p *parser) scanNumericLiteral(decimalPoint bool) (token.Token, string) {
 		}
 	}
 
-	p.scanMantissa(10)
+	p.scanMantissa(10, false)
 
 float:
 	if p.chr == '.' {
 		p.read()
-		p.scanMantissa(10)
+		p.scanMantissa(10, false)
 	}
 
 exponent:
@@ -1002,7 +1100,7 @@ exponent:
 		}
 		if isDecimalDigit(p.chr) {
 			p.read()
-			p.scanMantissa(10)
+			p.scanMantissa(10, true)
 		} else {
 			return token.ILLEGAL, p.str[offset:p.chrOffset]
 		}

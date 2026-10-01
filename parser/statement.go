@@ -174,23 +174,34 @@ func (p *parser) parseTryStatement() ast.Statement {
 			p.comments.Unset()
 		}
 		p.next()
-		p.expect(token.LEFT_PARENTHESIS)
-		if p.token != token.IDENTIFIER {
-			p.expect(token.IDENTIFIER)
-			p.nextStatement()
-			return &ast.BadStatement{From: catch, To: p.idx}
-		}
+		if p.token == token.LEFT_BRACE {
+			// Optional catch binding: catch { ... }.
+			node.Catch = &ast.CatchStatement{
+				Catch: catch,
+				Body:  p.parseBlockStatement(),
+			}
+			if p.mode&StoreComments != 0 {
+				p.comments.CommentMap.AddComments(node.Catch.Body, p.comments.FetchAll(), ast.TRAILING)
+			}
+		} else {
+			p.expect(token.LEFT_PARENTHESIS)
+			if p.token != token.IDENTIFIER {
+				p.expect(token.IDENTIFIER)
+				p.nextStatement()
+				return &ast.BadStatement{From: catch, To: p.idx}
+			}
 
-		identifier := p.parseIdentifier()
-		p.expect(token.RIGHT_PARENTHESIS)
-		node.Catch = &ast.CatchStatement{
-			Catch:     catch,
-			Parameter: identifier,
-			Body:      p.parseBlockStatement(),
-		}
+			identifier := p.parseIdentifier()
+			p.expect(token.RIGHT_PARENTHESIS)
+			node.Catch = &ast.CatchStatement{
+				Catch:     catch,
+				Parameter: identifier,
+				Body:      p.parseBlockStatement(),
+			}
 
-		if p.mode&StoreComments != 0 {
-			p.comments.CommentMap.AddComments(node.Catch.Body, p.comments.FetchAll(), ast.TRAILING)
+			if p.mode&StoreComments != 0 {
+				p.comments.CommentMap.AddComments(node.Catch.Body, p.comments.FetchAll(), ast.TRAILING)
+			}
 		}
 	}
 

@@ -48,6 +48,10 @@ types:
         function: 2
       - name: getOwnPropertyDescriptors
         function: 1
+      - name: hasOwn
+        function: 2
+      - name: groupBy
+        function: 2
     prototype:
       value: prototypeValueObject
       properties:
@@ -125,6 +129,12 @@ types:
           function: 1
         - name: reverse
           function: -1
+        - name: toReversed
+          function: -1
+        - name: toSorted
+          function: 1
+        - name: with
+          function: 2
         - name: shift
           function: -1
         - name: unshift
@@ -186,6 +196,8 @@ types:
         value: rt.global.StringPrototype
       - name: fromCharCode
         function: 1
+      - name: fromCodePoint
+        function: 1
       - name: raw
         function: 1
     prototype:
@@ -201,6 +213,8 @@ types:
         - name: charAt
           function: 1
         - name: charCodeAt
+          function: 1
+        - name: codePointAt
           function: 1
         - name: concat
           function: 1
@@ -256,6 +270,8 @@ types:
           function: -1
         - name: toLocaleUpperCase
           function: -1
+        - name: normalize
+          function: -1
         - name: toLowerCase
           function: -1
         - name: toUpperCase
@@ -305,6 +321,15 @@ types:
       - name: MAX_VALUE
         value: math.MaxFloat64
         kind: valueNumber
+      - name: EPSILON
+        kind: valueNumber
+        value: 0x1p-52
+      - name: MAX_SAFE_INTEGER
+        kind: valueNumber
+        value: 1<<53 - 1
+      - name: MIN_SAFE_INTEGER
+        kind: valueNumber
+        value: -(1<<53 - 1)
       - name: MIN_VALUE
         kind: valueNumber
         value: math.SmallestNonzeroFloat64
@@ -406,6 +431,8 @@ types:
         function: 2
       - name: clz32
         function: 1
+      - name: imul
+        function: 2
       - name: fround
         function: 1
       - name: E

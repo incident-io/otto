@@ -128,6 +128,7 @@ type BracketExpression struct {
 	Member       Expression
 	LeftBracket  file.Idx
 	RightBracket file.Idx
+	Optional     bool // a?.[b]
 }
 
 // Idx0 implements Node.
@@ -149,6 +150,7 @@ type CallExpression struct {
 	ArgumentList     []Expression
 	LeftParenthesis  file.Idx
 	RightParenthesis file.Idx
+	Optional         bool // a?.()
 }
 
 // Idx0 implements Node.
@@ -188,6 +190,7 @@ func (*ConditionalExpression) expression() {}
 type DotExpression struct {
 	Left       Expression
 	Identifier *Identifier
+	Optional   bool // a?.b
 }
 
 // Idx0 implements Node.
@@ -202,6 +205,26 @@ func (de *DotExpression) Idx1() file.Idx {
 
 // expression implements Expression.
 func (*DotExpression) expression() {}
+
+// OptionalChain wraps a member or call chain containing at least one
+// optional link (a?.b, a?.[b], a?.()). If any optional link's base is null or
+// undefined, the whole chain evaluates to undefined.
+type OptionalChain struct {
+	Expression Expression
+}
+
+// Idx0 implements Node.
+func (oc *OptionalChain) Idx0() file.Idx {
+	return oc.Expression.Idx0()
+}
+
+// Idx1 implements Node.
+func (oc *OptionalChain) Idx1() file.Idx {
+	return oc.Expression.Idx1()
+}
+
+// expression implements Expression.
+func (*OptionalChain) expression() {}
 
 // EmptyExpression represents an empty expression.
 type EmptyExpression struct {

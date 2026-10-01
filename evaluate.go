@@ -48,6 +48,15 @@ func (rt *runtime) evaluateModulo(left float64, right float64) Value { //nolint:
 	return Value{}
 }
 
+// exponentiate implements Number::exponentiate, which differs from math.Pow
+// for a NaN exponent and for a base of ±1 with an infinite exponent.
+func exponentiate(base, exponent float64) float64 {
+	if math.IsNaN(exponent) || (math.Abs(base) == 1 && math.IsInf(exponent, 0)) {
+		return math.NaN()
+	}
+	return math.Pow(base, exponent)
+}
+
 func (rt *runtime) calculateBinaryExpression(operator token.Token, left Value, right Value) Value {
 	leftValue := left.resolve()
 
@@ -78,6 +87,9 @@ func (rt *runtime) calculateBinaryExpression(operator token.Token, left Value, r
 	case token.REMAINDER:
 		rightValue := right.resolve()
 		return float64Value(math.Mod(leftValue.float64(), rightValue.float64()))
+	case token.EXPONENT:
+		rightValue := right.resolve()
+		return float64Value(exponentiate(leftValue.float64(), rightValue.float64()))
 
 		// Logical
 	case token.LOGICAL_AND:
