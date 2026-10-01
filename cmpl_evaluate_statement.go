@@ -18,6 +18,13 @@ func (rt *runtime) cmplEvaluateNodeStatement(node nodeStatement) Value {
 		rt.checkInterrupt()
 	}
 
+	rt.enterNative()
+	value := rt.cmplEvaluateNodeStatementInner(node)
+	rt.leaveNative()
+	return value
+}
+
+func (rt *runtime) cmplEvaluateNodeStatementInner(node nodeStatement) Value {
 	switch node := node.(type) {
 	case *nodeBlockStatement:
 		return rt.cmplEvaluateNodeBlockStatement(node)

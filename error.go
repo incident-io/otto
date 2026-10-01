@@ -227,6 +227,11 @@ func catchPanic(function func()) (err error) {
 			if halt, ok := caught.(*interruptPanic); ok {
 				panic(halt.value)
 			}
+			if limit, ok := caught.(*resourceLimitPanic); ok {
+				limit.rt.unwinding = false
+				err = &Error{limit.err}
+				return
+			}
 			if excep, ok := caught.(*exception); ok {
 				caught = excep.eject()
 			}

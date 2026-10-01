@@ -91,7 +91,9 @@ func (rt *runtime) newBoundFunctionObject(target *object, this Value, argumentLi
 	if length < 0 {
 		length = 0
 	}
-	o.defineProperty("name", stringValue("bound "+target.get("name").String()), 0o000, false)
+	name := target.get("name").String()
+	rt.allocateString(len("bound ") + len(name))
+	o.defineProperty("name", stringValue("bound "+name), 0o000, false)
 	o.defineProperty(propertyLength, intValue(length), 0o000, false)
 	o.defineProperty("caller", Value{}, 0o000, false)    // TODO Should throw a TypeError
 	o.defineProperty("arguments", Value{}, 0o000, false) // TODO Should throw a TypeError
@@ -166,6 +168,13 @@ func (o *object) isCall() bool {
 }
 
 func (o *object) call(this Value, argumentList []Value, eval bool, frm frame) Value { //nolint:unparam // Isn't currently used except in recursive self.
+	rt := o.runtime
+	depth := rt.nativeDepth
+	defer func() {
+		rt.nativeDepth = depth
+	}()
+	rt.enterNative()
+
 	switch fn := o.value.(type) {
 	case nativeFunctionObject:
 		// Since eval is a native function, we only have to check for it here
@@ -174,7 +183,6 @@ func (o *object) call(this Value, argumentList []Value, eval bool, frm frame) Va
 		}
 
 		// Enter a scope, name from the native object...
-		rt := o.runtime
 		if rt.scope != nil && !eval {
 			rt.enterFunctionScope(rt.scope.lexical, this)
 			rt.scope.frame = frame{
@@ -205,7 +213,6 @@ func (o *object) call(this Value, argumentList []Value, eval bool, frm frame) Va
 		return fn.target.call(fn.this, argumentList, false, frm)
 
 	case nodeFunctionObject:
-		rt := o.runtime
 		// Arrow functions do not bind their own `this`; they use the value
 		// captured lexically when the function literal was evaluated.
 		if fn.node.isArrow {

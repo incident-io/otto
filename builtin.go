@@ -132,97 +132,124 @@ func builtinGlobalParseInt(call FunctionCall) Value {
 	return int64Value(value)
 }
 
-var (
-	parseFloatMatchBadSpecial = regexp.MustCompile(`[\+\-]?(?:[Ii]nf$|infinity)`)
-	parseFloatMatchValid      = regexp.MustCompile(`[0-9eE\+\-\.]|Infinity`)
-)
-
 func builtinGlobalParseFloat(call FunctionCall) Value {
-	// Caveat emptor: This implementation does NOT match the specification
-	input := strings.Trim(call.Argument(0).string(), builtinStringTrimWhitespace)
-
-	if parseFloatMatchBadSpecial.MatchString(input) {
+	input := strings.TrimLeft(call.Argument(0).string(), builtinStringTrimWhitespace)
+	prefix := parseFloatPrefix(input)
+	if prefix == "" {
 		return NaNValue()
 	}
-	value, err := strconv.ParseFloat(input, 64)
-	if err != nil {
-		for end := len(input); end > 0; end-- {
-			val := input[0:end]
-			if !parseFloatMatchValid.MatchString(val) {
-				return NaNValue()
-			}
-			value, err = strconv.ParseFloat(val, 64)
-			if err == nil {
-				break
-			}
+	// prefix is a valid decimal literal, so ParseFloat can only fail by
+	// overflowing, in which case it returns the correctly signed infinity.
+	value, _ := strconv.ParseFloat(prefix, 64)
+	return float64Value(value)
+}
+
+// parseFloatPrefix returns the longest prefix of input that is a
+// StrDecimalLiteral, or "" if there is none.
+func parseFloatPrefix(input string) string {
+	pos := 0
+	if pos < len(input) && (input[pos] == '+' || input[pos] == '-') {
+		pos++
+	}
+	if strings.HasPrefix(input[pos:], "Infinity") {
+		return input[:pos+len("Infinity")]
+	}
+	digits := func() int {
+		start := pos
+		for pos < len(input) && '0' <= input[pos] && input[pos] <= '9' {
+			pos++
 		}
-		if err != nil {
-			return NaNValue()
+		return pos - start
+	}
+	mantissa := digits()
+	if pos < len(input) && input[pos] == '.' {
+		pos++
+		mantissa += digits()
+	}
+	if mantissa == 0 {
+		return ""
+	}
+	end := pos
+	if pos < len(input) && (input[pos] == 'e' || input[pos] == 'E') {
+		pos++
+		if pos < len(input) && (input[pos] == '+' || input[pos] == '-') {
+			pos++
+		}
+		if digits() > 0 {
+			end = pos
 		}
 	}
-	return float64Value(value)
+	return input[:end]
 }
 
 // encodeURI/decodeURI
 
-func encodeDecodeURI(call FunctionCall, escape *regexp.Regexp) Value {
-	value := call.Argument(0)
-	var input []uint16
-	switch vl := value.value.(type) {
-	case []uint16:
-		input = vl
-	default:
-		input = utf16.Encode([]rune(value.string()))
-	}
-	if len(input) == 0 {
-		return stringValue("")
-	}
-	output := []byte{}
-	length := len(input)
-	encode := make([]byte, 4)
-	for index := 0; index < length; {
-		value := input[index]
-		decode := utf16.Decode(input[index : index+1])
-		if value >= 0xDC00 && value <= 0xDFFF {
-			panic(call.runtime.panicURIError("URI malformed"))
+func encodeDecodeURI(call FunctionCall, unescaped string) Value {
+	rt := call.runtime
+	var output []byte
+	encode := make([]byte, utf8.UTFMax)
+	n := 0
+	appendRune := func(r rune) {
+		if n%interruptEvery == 0 {
+			rt.checkInterrupt()
+			rt.checkStringLength(len(output))
 		}
-		if value >= 0xD800 && value <= 0xDBFF {
-			index++
-			if index >= length {
-				panic(call.runtime.panicURIError("URI malformed"))
+		n++
+		size := utf8.EncodeRune(encode, r)
+		for _, b := range encode[0:size] {
+			if b < utf8.RuneSelf && (isAlphanumeric(b) || strings.IndexByte(unescaped, b) >= 0) {
+				output = append(output, b)
+			} else {
+				output = append(output, '%', escapeBase16[b>>4], escapeBase16[b&15])
 			}
-			// input = ..., value, value1, ...
-			value1 := input[index]
-			if value1 < 0xDC00 || value1 > 0xDFFF {
-				panic(call.runtime.panicURIError("URI malformed"))
-			}
-			decode = []rune{((rune(value) - 0xD800) * 0x400) + (rune(value1) - 0xDC00) + 0x10000}
 		}
-		index++
-		size := utf8.EncodeRune(encode, decode[0])
-		output = append(output, encode[0:size]...)
 	}
 
-	bytes := escape.ReplaceAllFunc(output, func(target []byte) []byte {
-		// Probably a better way of doing this
-		if target[0] == ' ' {
-			return []byte("%20")
+	value := call.Argument(0)
+	if input, ok := value.value.([]uint16); ok {
+		for index := 0; index < len(input); index++ {
+			r := rune(input[index])
+			switch {
+			case utf16.IsSurrogate(r) && r >= 0xDC00:
+				panic(rt.panicURIError("URI malformed"))
+			case utf16.IsSurrogate(r):
+				index++
+				if index >= len(input) {
+					panic(rt.panicURIError("URI malformed"))
+				}
+				r = utf16.DecodeRune(r, rune(input[index]))
+				if r == utf8.RuneError {
+					panic(rt.panicURIError("URI malformed"))
+				}
+			}
+			appendRune(r)
 		}
-		return []byte(url.QueryEscape(string(target)))
-	})
-	return stringValue(string(bytes))
+	} else {
+		for _, r := range value.string() {
+			appendRune(r)
+		}
+	}
+	rt.allocateString(len(output))
+	return stringValue(string(output))
 }
 
-var encodeURIRegexp = regexp.MustCompile(`([^~!@#$&*()=:/,;?+'])`)
+func isAlphanumeric(b byte) bool {
+	return 'A' <= b && b <= 'Z' || 'a' <= b && b <= 'z' || '0' <= b && b <= '9'
+}
+
+// encodeURIUnescaped and encodeURIComponentUnescaped are the non-alphanumeric
+// characters that encodeURI and encodeURIComponent leave unescaped.
+const (
+	encodeURIUnescaped          = "-_.!~*'();/?:@&=+$,#"
+	encodeURIComponentUnescaped = "-_.!~*'()"
+)
 
 func builtinGlobalEncodeURI(call FunctionCall) Value {
-	return encodeDecodeURI(call, encodeURIRegexp)
+	return encodeDecodeURI(call, encodeURIUnescaped)
 }
 
-var encodeURIComponentRegexp = regexp.MustCompile(`([^~!*()'])`)
-
 func builtinGlobalEncodeURIComponent(call FunctionCall) Value {
-	return encodeDecodeURI(call, encodeURIComponentRegexp)
+	return encodeDecodeURI(call, encodeURIComponentUnescaped)
 }
 
 // 3B/2F/3F/3A/40/26/3D/2B/24/2C/23.
@@ -268,45 +295,60 @@ func builtinShouldEscape(chr byte) bool {
 const escapeBase16 = "0123456789ABCDEF"
 
 func builtinEscape(input string) string {
-	output := make([]byte, 0, len(input))
+	return escapeString(input, nil)
+}
+
+// escapeString implements escape, calling step, if not nil, with the length of
+// the output so far after each input character.
+func escapeString(input string, step func(int)) string {
+	var output strings.Builder
 	length := len(input)
 	for index := 0; index < length; {
 		if builtinShouldEscape(input[index]) {
 			chr, width := utf8.DecodeRuneInString(input[index:])
 			chr16 := utf16.Encode([]rune{chr})[0]
 			if 256 > chr16 {
-				output = append(output, '%',
-					escapeBase16[chr16>>4],
-					escapeBase16[chr16&15],
-				)
+				output.Write([]byte{'%', escapeBase16[chr16>>4], escapeBase16[chr16&15]})
 			} else {
-				output = append(output, '%', 'u',
+				output.Write([]byte{
+					'%', 'u',
 					escapeBase16[chr16>>12],
 					escapeBase16[(chr16>>8)&15],
 					escapeBase16[(chr16>>4)&15],
 					escapeBase16[chr16&15],
-				)
+				})
 			}
 			index += width
 		} else {
-			output = append(output, input[index])
+			output.WriteByte(input[index])
 			index++
 		}
+		if step != nil {
+			step(output.Len())
+		}
 	}
-	return string(output)
+	return output.String()
 }
 
 func builtinUnescape(input string) string {
-	output := make([]rune, 0, len(input))
+	return unescapeString(input, nil)
+}
+
+// unescapeString implements unescape, calling step, if not nil, with the length
+// of the output so far after each input character.
+func unescapeString(input string, step func(int)) string {
+	var output strings.Builder
 	length := len(input)
 	for index := 0; index < length; {
+		if step != nil {
+			step(output.Len())
+		}
 		if input[index] == '%' {
 			if index <= length-6 && input[index+1] == 'u' {
 				byte16, err := hex.DecodeString(input[index+2 : index+6])
 				if err == nil {
 					value := uint16(byte16[0])<<8 + uint16(byte16[1])
-					chr := utf16.Decode([]uint16{value})[0]
-					output = append(output, chr)
+					output.WriteRune(utf16.Decode([]uint16{value})[0])
 					index += 6
 					continue
 				}
@@ -314,24 +356,40 @@ func builtinUnescape(input string) string {
 			if index <= length-3 {
 				byte8, err := hex.DecodeString(input[index+1 : index+3])
 				if err == nil {
-					value := uint16(byte8[0])
-					chr := utf16.Decode([]uint16{value})[0]
-					output = append(output, chr)
+					output.WriteRune(rune(byte8[0]))
 					index += 3
 					continue
 				}
 			}
 		}
-		output = append(output, rune(input[index]))
+		output.WriteRune(rune(input[index]))
 		index++
 	}
-	return string(output)
+	return output.String()
+}
+
+// stringStep returns a step function for a native loop building a string,
+// which polls for interrupts and enforces the string length limit as the
+// output grows.
+func (rt *runtime) stringStep() func(int) {
+	i := 0
+	return func(length int) {
+		i++
+		rt.pollInterrupt(i)
+		if i%interruptEvery == 0 {
+			rt.checkStringLength(length)
+		}
+	}
 }
 
 func builtinGlobalEscape(call FunctionCall) Value {
-	return stringValue(builtinEscape(call.Argument(0).string()))
+	output := escapeString(call.Argument(0).string(), call.runtime.stringStep())
+	call.runtime.allocateString(len(output))
+	return stringValue(output)
 }
 
 func builtinGlobalUnescape(call FunctionCall) Value {
-	return stringValue(builtinUnescape(call.Argument(0).string()))
+	output := unescapeString(call.Argument(0).string(), call.runtime.stringStep())
+	call.runtime.allocateString(len(output))
+	return stringValue(output)
 }

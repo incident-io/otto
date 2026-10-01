@@ -260,11 +260,18 @@ var (
 	matchDateTimeZone = regexp.MustCompile(`^(.*)(?:(Z)|([\+\-]\d{2}):(\d{2}))$`)
 )
 
+// maxDateStringLength is longer than any string matching dateLayoutList.
+const maxDateStringLength = 256
+
 // dateParse returns the epoch of the parsed date.
 func dateParse(date string) float64 {
 	// YYYY-MM-DDTHH:mm:ss.sssZ
 	var time Time.Time
 	var err error
+
+	if len(date) > maxDateStringLength {
+		return math.NaN()
+	}
 
 	if match := matchDateTimeZone.FindStringSubmatch(date); match != nil {
 		if match[2] == "Z" {

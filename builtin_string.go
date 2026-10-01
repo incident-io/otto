@@ -3,11 +3,13 @@ package otto
 import (
 	"bytes"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/incident-io/otto/internal/regexp"
 )
 
 // String
@@ -97,7 +99,7 @@ func builtinStringConcat(call FunctionCall) Value {
 		items[index] = item.string()
 		size += len(items[index])
 	}
-	call.runtime.checkStringLength(size)
+	call.runtime.allocateString(size)
 	var value strings.Builder
 	value.Grow(size)
 	value.WriteString(this)
@@ -191,7 +193,7 @@ func builtinStringMatch(call FunctionCall) Value {
 		return objectValue(execResultToArray(call.runtime, target, result))
 	}
 
-	result := matcher.regExpValue().regularExpression.FindAllStringIndex(target, -1)
+	result := call.runtime.hookRegExp(matcher.regExpValue().regularExpression).FindAllStringIndex(target, -1)
 	if result == nil {
 		matcher.put("lastIndex", intValue(0), true)
 		return Value{} // !match
@@ -199,6 +201,7 @@ func builtinStringMatch(call FunctionCall) Value {
 	matchCount := len(result)
 	valueArray := make([]Value, matchCount)
 	for index := range matchCount {
+		call.runtime.pollInterrupt(index)
 		valueArray[index] = stringValue(target[result[index][0]:result[index][1]])
 	}
 	matcher.put("lastIndex", intValue(result[matchCount-1][1]), true)
@@ -264,7 +267,7 @@ func builtinStringReplace(call FunctionCall) Value {
 		search = regexp.MustCompile(regexp.QuoteMeta(searchValue.string()))
 	}
 
-	found := search.FindAllSubmatchIndex(target, find)
+	found := call.runtime.hookRegExp(search).FindAllSubmatchIndex(target, find)
 	if found == nil {
 		return stringValue(string(target)) // !match
 	}
@@ -327,7 +330,7 @@ func builtinStringSearch(call FunctionCall) Value {
 	if !searchValue.IsObject() || search.class != classRegExpName {
 		search = call.runtime.newRegExp(searchValue, Value{})
 	}
-	result := search.regExpValue().regularExpression.FindStringIndex(target)
+	result := call.runtime.hookRegExp(search.regExpValue().regularExpression).FindStringIndex(target)
 	if result == nil {
 		return intValue(-1)
 	}
@@ -355,13 +358,15 @@ func builtinStringSplit(call FunctionCall) Value {
 
 	if separatorValue.isRegExp() {
 		targetLength := len(target)
-		search := separatorValue.object().regExpValue().regularExpression
+		search := call.runtime.hookRegExp(separatorValue.object().regExpValue().regularExpression)
 		valueArray := []Value{}
 		result := search.FindAllStringSubmatchIndex(target, -1)
 		lastIndex := 0
 		found := 0
 
-		for _, match := range result {
+		call.runtime.allocateDense(int64(len(result)), allocValueCost+allocPropertyCost)
+		for i, match := range result {
+			call.runtime.pollInterrupt(i)
 			if match[0] == match[1] {
 				// FIXME Ugh, this is a hack
 				if match[0] == 0 || match[0] == targetLength {
@@ -419,6 +424,11 @@ func builtinStringSplit(call FunctionCall) Value {
 			excess = true
 		}
 
+		count := int64(strings.Count(target, separator)) + 1
+		if splitLimit > 0 {
+			count = min(count, int64(splitLimit))
+		}
+		call.runtime.allocateDense(count, allocValueCost+allocPropertyCost)
 		split := strings.SplitN(target, separator, splitLimit)
 
 		if excess && len(split) > limit {
@@ -555,6 +565,7 @@ func builtinStringRepeat(call FunctionCall) Value {
 		return stringValue("")
 	}
 	call.runtime.checkStringLengthFloat(float64(len(target)) * count)
+	call.runtime.allocateDense(int64(count), int64(len(target)))
 	return stringValue(strings.Repeat(target, int(count)))
 }
 
@@ -585,10 +596,12 @@ func stringPad(call FunctionCall, atStart bool) Value {
 	padding := make([]rune, 0, preallocation(int64(padLen)))
 	for len(padding) < padLen {
 		call.runtime.checkInterrupt()
+		call.runtime.allocateElement(int64(len(padding)+len(fillRunes)-1), 4)
+		call.runtime.allocateN(int64(len(fillRunes)-1), 4)
 		padding = append(padding, fillRunes...)
 	}
 	pad := string(padding[:padLen])
-	call.runtime.checkStringLength(len(target) + len(pad))
+	call.runtime.allocateString(len(target) + len(pad))
 
 	if atStart {
 		return stringValue(pad + target)
@@ -700,12 +713,12 @@ func builtinStringReplaceAll(call FunctionCall) Value {
 
 func builtinStringToLowerCase(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
-	return stringValue(strings.ToLower(call.This.string()))
+	return stringValue(call.runtime.mapString(call.This.string(), unicode.ToLower))
 }
 
 func builtinStringToUpperCase(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
-	return stringValue(strings.ToUpper(call.This.string()))
+	return stringValue(call.runtime.mapString(call.This.string(), unicode.ToUpper))
 }
 
 // 7.2 Table 2 — Whitespace Characters & 7.3 Table 3 - Line Terminator Characters.
