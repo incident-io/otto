@@ -23,8 +23,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/incident-io/otto"
-	"github.com/incident-io/otto/parser"
+	"github.com/incident-io/otto/v2"
+	"github.com/incident-io/otto/v2/parser"
 )
 
 const (

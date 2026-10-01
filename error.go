@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/incident-io/otto/file"
+	"github.com/incident-io/otto/v2/file"
 )
 
 type exception struct {

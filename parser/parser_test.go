@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/underscore"
+	"github.com/incident-io/otto/v2/ast"
+	"github.com/incident-io/otto/v2/file"
+	"github.com/incident-io/otto/v2/underscore"
 	"github.com/stretchr/testify/require"
 )
 

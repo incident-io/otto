@@ -3,7 +3,7 @@ package ast
 import (
 	"testing"
 
-	"github.com/incident-io/otto/file"
+	"github.com/incident-io/otto/v2/file"
 )
 
 func TestCommentMap(t *testing.T) {

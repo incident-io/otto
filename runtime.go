@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/parser"
+	"github.com/incident-io/otto/v2/ast"
+	"github.com/incident-io/otto/v2/parser"
 )
 
 type global struct {

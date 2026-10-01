@@ -2,7 +2,7 @@
 Package parser implements a parser for JavaScript.
 
 	import (
-	    "github.com/incident-io/otto/parser"
+	    "github.com/incident-io/otto/v2/parser"
 	)
 
 Parse and return an AST
@@ -39,9 +39,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/token"
+	"github.com/incident-io/otto/v2/ast"
+	"github.com/incident-io/otto/v2/file"
+	"github.com/incident-io/otto/v2/token"
 	"gopkg.in/sourcemap.v1"
 )
 

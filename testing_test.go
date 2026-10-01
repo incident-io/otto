@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/incident-io/otto/terst"
+	"github.com/incident-io/otto/v2/terst"
 )
 
 func tt(t *testing.T, arguments ...func()) {

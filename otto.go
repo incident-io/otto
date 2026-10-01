@@ -1,10 +1,10 @@
 /*
 Package otto is a JavaScript parser and interpreter written natively in Go.
 
-http://godoc.org/github.com/incident-io/otto
+http://godoc.org/github.com/incident-io/otto/v2
 
 	import (
-	    "github.com/incident-io/otto"
+	    "github.com/incident-io/otto/v2"
 	)
 
 Run something in the VM
@@ -79,7 +79,7 @@ Use the functions in JavaScript
 
 A separate parser is available in the parser package if you're just interested in building an AST.
 
-http://godoc.org/github.com/incident-io/otto/parser
+http://godoc.org/github.com/incident-io/otto/v2/parser
 
 Parse and return an AST
 
@@ -105,7 +105,7 @@ otto
 
 You can run (Go) JavaScript from the commandline with: http://github.com/incident-io/otto/tree/master/otto
 
-	$ go get -v github.com/incident-io/otto/otto
+	$ go get -v github.com/incident-io/otto/v2/otto
 
 Run JavaScript by entering some source on stdin or by giving otto a filename:
 
@@ -116,8 +116,8 @@ underscore
 Optionally include the JavaScript utility-belt library, underscore, with this import:
 
 	import (
-		"github.com/incident-io/otto"
-		_ "github.com/incident-io/otto/underscore"
+		"github.com/incident-io/otto/v2"
+		_ "github.com/incident-io/otto/v2/underscore"
 	)
 
 	// Now every otto runtime will come loaded with underscore
@@ -162,7 +162,7 @@ If you want to stop long running executions (like third-party code), you can use
 	    "os"
 	    "time"
 
-	    "github.com/incident-io/otto"
+	    "github.com/incident-io/otto/v2"
 	)
 
 	var halt = errors.New("Stahp")
@@ -224,8 +224,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/registry"
+	"github.com/incident-io/otto/v2/file"
+	"github.com/incident-io/otto/v2/registry"
 )
 
 // Otto is the representation of the JavaScript runtime.

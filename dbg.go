@@ -3,7 +3,7 @@
 package otto
 
 import (
-	Dbg "github.com/incident-io/otto/dbg"
+	Dbg "github.com/incident-io/otto/v2/dbg"
 )
 
 var dbg, dbgf = Dbg.New()

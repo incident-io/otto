@@ -3,9 +3,9 @@ package otto
 import (
 	"fmt"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/token"
+	"github.com/incident-io/otto/v2/ast"
+	"github.com/incident-io/otto/v2/file"
+	"github.com/incident-io/otto/v2/token"
 )
 
 var (

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/parser"
+	"github.com/incident-io/otto/v2/ast"
+	"github.com/incident-io/otto/v2/file"
+	"github.com/incident-io/otto/v2/parser"
 )
 
 type walkExample struct {

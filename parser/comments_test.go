@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/incident-io/otto/ast"
+	"github.com/incident-io/otto/v2/ast"
 )
 
 func checkComments(actual []*ast.Comment, expected []string, position ast.CommentPosition) error {

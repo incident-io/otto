@@ -3,9 +3,9 @@ package parser
 import (
 	"testing"
 
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/terst"
-	"github.com/incident-io/otto/token"
+	"github.com/incident-io/otto/v2/file"
+	"github.com/incident-io/otto/v2/terst"
+	"github.com/incident-io/otto/v2/token"
 )
 
 var (

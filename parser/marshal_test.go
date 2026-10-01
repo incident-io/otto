@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/incident-io/otto/ast"
+	"github.com/incident-io/otto/v2/ast"
 	"github.com/stretchr/testify/require"
 )
 

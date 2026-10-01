@@ -6,7 +6,7 @@ import (
 	goruntime "runtime"
 	"strings"
 
-	"github.com/incident-io/otto/token"
+	"github.com/incident-io/otto/v2/token"
 )
 
 func (rt *runtime) cmplEvaluateNodeExpression(node nodeExpression) Value {
