@@ -38,6 +38,7 @@ func builtinErrorToString(call FunctionCall) Value {
 		return stringValue(name)
 	}
 
+	call.runtime.allocateString(len(name) + len(message) + 2)
 	return stringValue(fmt.Sprintf("%s: %s", name, message))
 }
 

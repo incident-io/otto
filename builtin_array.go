@@ -63,6 +63,7 @@ func builtinArrayToLocaleString(call FunctionCall) Value {
 		call.runtime.checkStringLength(size - len(separator))
 		stringList = append(stringList, stringValue)
 	}
+	call.runtime.allocate(int64(size))
 	return stringValue(strings.Join(stringList, separator))
 }
 
@@ -172,6 +173,7 @@ func builtinArrayJoin(call FunctionCall) Value {
 		call.runtime.checkStringLength(size - len(separator))
 		stringList = append(stringList, stringValue)
 	}
+	call.runtime.allocate(int64(size))
 	return stringValue(strings.Join(stringList, separator))
 }
 
@@ -462,14 +464,25 @@ func arraySortQuickPartition(thisObject *object, left, right, pivot uint, compar
 	return cursor, cursor2
 }
 
+// arraySortQuickSort recurses into the smaller partition and loops over the
+// larger, so its Go stack depth is logarithmic in the length even for an
+// inconsistent comparator.
 func arraySortQuickSort(thisObject *object, left, right uint, compare *object) {
-	if left < right {
+	for left < right {
 		middle := left + (right-left)/2
 		pivot, pivot2 := arraySortQuickPartition(thisObject, left, right, middle, compare)
-		if pivot > 0 {
-			arraySortQuickSort(thisObject, left, pivot-1, compare)
+		if pivot-left < right-pivot2 {
+			if pivot > left {
+				arraySortQuickSort(thisObject, left, pivot-1, compare)
+			}
+			left = pivot2 + 1
+		} else {
+			arraySortQuickSort(thisObject, pivot2+1, right, compare)
+			if pivot == 0 {
+				return
+			}
+			right = pivot - 1
 		}
-		arraySortQuickSort(thisObject, pivot2+1, right, compare)
 	}
 }
 
@@ -966,6 +979,8 @@ func builtinArrayFrom(call FunctionCall) Value {
 	if items.kind == valueString {
 		// Iterate by code point, matching the spec's string-iterator semantics.
 		for _, r := range items.string() {
+			call.runtime.pollInterrupt(len(source))
+			call.runtime.allocateElement(int64(len(source)), allocValueCost)
 			source = append(source, stringValue(string(r)))
 		}
 	} else {

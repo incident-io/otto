@@ -132,97 +132,124 @@ func builtinGlobalParseInt(call FunctionCall) Value {
 	return int64Value(value)
 }
 
-var (
-	parseFloatMatchBadSpecial = regexp.MustCompile(`[\+\-]?(?:[Ii]nf$|infinity)`)
-	parseFloatMatchValid      = regexp.MustCompile(`[0-9eE\+\-\.]|Infinity`)
-)
-
 func builtinGlobalParseFloat(call FunctionCall) Value {
-	// Caveat emptor: This implementation does NOT match the specification
-	input := strings.Trim(call.Argument(0).string(), builtinStringTrimWhitespace)
-
-	if parseFloatMatchBadSpecial.MatchString(input) {
+	input := strings.TrimLeft(call.Argument(0).string(), builtinStringTrimWhitespace)
+	prefix := parseFloatPrefix(input)
+	if prefix == "" {
 		return NaNValue()
 	}
-	value, err := strconv.ParseFloat(input, 64)
-	if err != nil {
-		for end := len(input); end > 0; end-- {
-			val := input[0:end]
-			if !parseFloatMatchValid.MatchString(val) {
-				return NaNValue()
-			}
-			value, err = strconv.ParseFloat(val, 64)
-			if err == nil {
-				break
-			}
+	// prefix is a valid decimal literal, so ParseFloat can only fail by
+	// overflowing, in which case it returns the correctly signed infinity.
+	value, _ := strconv.ParseFloat(prefix, 64)
+	return float64Value(value)
+}
+
+// parseFloatPrefix returns the longest prefix of input that is a
+// StrDecimalLiteral, or "" if there is none.
+func parseFloatPrefix(input string) string {
+	pos := 0
+	if pos < len(input) && (input[pos] == '+' || input[pos] == '-') {
+		pos++
+	}
+	if strings.HasPrefix(input[pos:], "Infinity") {
+		return input[:pos+len("Infinity")]
+	}
+	digits := func() int {
+		start := pos
+		for pos < len(input) && '0' <= input[pos] && input[pos] <= '9' {
+			pos++
 		}
-		if err != nil {
-			return NaNValue()
+		return pos - start
+	}
+	mantissa := digits()
+	if pos < len(input) && input[pos] == '.' {
+		pos++
+		mantissa += digits()
+	}
+	if mantissa == 0 {
+		return ""
+	}
+	end := pos
+	if pos < len(input) && (input[pos] == 'e' || input[pos] == 'E') {
+		pos++
+		if pos < len(input) && (input[pos] == '+' || input[pos] == '-') {
+			pos++
+		}
+		if digits() > 0 {
+			end = pos
 		}
 	}
-	return float64Value(value)
+	return input[:end]
 }
 
 // encodeURI/decodeURI
 
-func encodeDecodeURI(call FunctionCall, escape *regexp.Regexp) Value {
-	value := call.Argument(0)
-	var input []uint16
-	switch vl := value.value.(type) {
-	case []uint16:
-		input = vl
-	default:
-		input = utf16.Encode([]rune(value.string()))
-	}
-	if len(input) == 0 {
-		return stringValue("")
-	}
-	output := []byte{}
-	length := len(input)
-	encode := make([]byte, 4)
-	for index := 0; index < length; {
-		value := input[index]
-		decode := utf16.Decode(input[index : index+1])
-		if value >= 0xDC00 && value <= 0xDFFF {
-			panic(call.runtime.panicURIError("URI malformed"))
+func encodeDecodeURI(call FunctionCall, unescaped string) Value {
+	rt := call.runtime
+	var output []byte
+	encode := make([]byte, utf8.UTFMax)
+	n := 0
+	appendRune := func(r rune) {
+		if n%interruptEvery == 0 {
+			rt.checkInterrupt()
+			rt.checkStringLength(len(output))
 		}
-		if value >= 0xD800 && value <= 0xDBFF {
-			index++
-			if index >= length {
-				panic(call.runtime.panicURIError("URI malformed"))
+		n++
+		size := utf8.EncodeRune(encode, r)
+		for _, b := range encode[0:size] {
+			if b < utf8.RuneSelf && (isAlphanumeric(b) || strings.IndexByte(unescaped, b) >= 0) {
+				output = append(output, b)
+			} else {
+				output = append(output, '%', escapeBase16[b>>4], escapeBase16[b&15])
 			}
-			// input = ..., value, value1, ...
-			value1 := input[index]
-			if value1 < 0xDC00 || value1 > 0xDFFF {
-				panic(call.runtime.panicURIError("URI malformed"))
-			}
-			decode = []rune{((rune(value) - 0xD800) * 0x400) + (rune(value1) - 0xDC00) + 0x10000}
 		}
-		index++
-		size := utf8.EncodeRune(encode, decode[0])
-		output = append(output, encode[0:size]...)
 	}
 
-	bytes := escape.ReplaceAllFunc(output, func(target []byte) []byte {
-		// Probably a better way of doing this
-		if target[0] == ' ' {
-			return []byte("%20")
+	value := call.Argument(0)
+	if input, ok := value.value.([]uint16); ok {
+		for index := 0; index < len(input); index++ {
+			r := rune(input[index])
+			switch {
+			case utf16.IsSurrogate(r) && r >= 0xDC00:
+				panic(rt.panicURIError("URI malformed"))
+			case utf16.IsSurrogate(r):
+				index++
+				if index >= len(input) {
+					panic(rt.panicURIError("URI malformed"))
+				}
+				r = utf16.DecodeRune(r, rune(input[index]))
+				if r == utf8.RuneError {
+					panic(rt.panicURIError("URI malformed"))
+				}
+			}
+			appendRune(r)
 		}
-		return []byte(url.QueryEscape(string(target)))
-	})
-	return stringValue(string(bytes))
+	} else {
+		for _, r := range value.string() {
+			appendRune(r)
+		}
+	}
+	rt.allocateString(len(output))
+	return stringValue(string(output))
 }
 
-var encodeURIRegexp = regexp.MustCompile(`([^~!@#$&*()=:/,;?+'])`)
+func isAlphanumeric(b byte) bool {
+	return 'A' <= b && b <= 'Z' || 'a' <= b && b <= 'z' || '0' <= b && b <= '9'
+}
+
+// encodeURIUnescaped and encodeURIComponentUnescaped are the non-alphanumeric
+// characters that encodeURI and encodeURIComponent leave unescaped.
+const (
+	encodeURIUnescaped          = "-_.!~*'();/?:@&=+$,#"
+	encodeURIComponentUnescaped = "-_.!~*'()"
+)
 
 func builtinGlobalEncodeURI(call FunctionCall) Value {
-	return encodeDecodeURI(call, encodeURIRegexp)
+	return encodeDecodeURI(call, encodeURIUnescaped)
 }
 
-var encodeURIComponentRegexp = regexp.MustCompile(`([^~!*()'])`)
-
 func builtinGlobalEncodeURIComponent(call FunctionCall) Value {
-	return encodeDecodeURI(call, encodeURIComponentRegexp)
+	return encodeDecodeURI(call, encodeURIComponentUnescaped)
 }
 
 // 3B/2F/3F/3A/40/26/3D/2B/24/2C/23.
@@ -329,9 +356,13 @@ func builtinUnescape(input string) string {
 }
 
 func builtinGlobalEscape(call FunctionCall) Value {
-	return stringValue(builtinEscape(call.Argument(0).string()))
+	output := builtinEscape(call.Argument(0).string())
+	call.runtime.allocateString(len(output))
+	return stringValue(output)
 }
 
 func builtinGlobalUnescape(call FunctionCall) Value {
-	return stringValue(builtinUnescape(call.Argument(0).string()))
+	output := builtinUnescape(call.Argument(0).string())
+	call.runtime.allocateString(len(output))
+	return stringValue(output)
 }

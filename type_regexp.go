@@ -2,8 +2,8 @@ package otto
 
 import (
 	"fmt"
-	"regexp"
 
+	"github.com/incident-io/otto/internal/regexp"
 	"github.com/incident-io/otto/parser"
 )
 
@@ -49,6 +49,9 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 		}
 	}
 
+	if len(pattern) > maxRegExpSize*8 {
+		panic(rt.panicSyntaxError("Invalid regular expression: regular expression too large"))
+	}
 	re2pattern, err := parser.TransformRegExp(pattern)
 	if err != nil {
 		panic(rt.panicTypeError("Invalid regular expression: %s", err.Error()))
@@ -57,6 +60,7 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 		re2pattern = fmt.Sprintf("(?%s:%s)", re2flags, re2pattern)
 	}
 
+	rt.checkRegExpSize(re2pattern)
 	regularExpression, err := regexp.Compile(re2pattern)
 	if err != nil {
 		panic(rt.panicSyntaxError("Invalid regular expression: %s", err.Error()[22:]))
@@ -97,7 +101,7 @@ func execRegExp(this *object, target string) (bool, []int) {
 	var result []int
 	if 0 > index || index > int64(len(target)) {
 	} else {
-		result = this.regExpValue().regularExpression.FindStringSubmatchIndex(target[index:])
+		result = this.runtime.hookRegExp(this.regExpValue().regularExpression).FindStringSubmatchIndex(target[index:])
 	}
 
 	if result == nil {

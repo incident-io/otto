@@ -66,6 +66,10 @@ type runtime struct {
 	stackLimit   int
 	stringLimit  int
 	traceLimit   int
+	nativeDepth  int
+	allocLimit   int64
+	allocated    int64
+	unwinding    bool // an interrupt or resource limit panic is unwinding the stack
 	lck          sync.Mutex
 }
 
@@ -138,10 +142,22 @@ func (rt *runtime) tryCatchEvaluate(inner func() Value) (tryValue Value, isExcep
 	// throwValue = The value of what was thrown
 	// other = Something that changes flow (return, break, continue) that is not a throw
 	// Otherwise, some sort of unknown panic happened, we'll just propagate it.
+	depth := rt.nativeDepth
+	rt.unwinding = false
 	defer func() {
+		if rt.unwinding {
+			// Let the uncatchable panic continue without recovering it:
+			// re-panicking in every frame would take time quadratic in the
+			// stack depth.
+			rt.nativeDepth = depth
+			return
+		}
 		if caught := recover(); caught != nil {
-			if halt, ok := caught.(*interruptPanic); ok {
-				panic(halt)
+			rt.nativeDepth = depth
+			switch caught.(type) {
+			case *interruptPanic, *resourceLimitPanic:
+				rt.unwinding = true
+				panic(caught)
 			}
 			if excep, ok := caught.(*exception); ok {
 				caught = excep.eject()
@@ -180,7 +196,7 @@ func (rt *runtime) checkInterrupt() {
 	select {
 	case fn := <-rt.otto.Interrupt:
 		if fn != nil {
-			runInterrupt(fn)
+			rt.runInterrupt(fn)
 		}
 	default:
 	}
@@ -195,9 +211,10 @@ func preallocation(length int64) int64 {
 	return max(min(length, maxPreallocation), 0)
 }
 
-func runInterrupt(fn func()) {
+func (rt *runtime) runInterrupt(fn func()) {
 	defer func() {
 		if caught := recover(); caught != nil {
+			rt.unwinding = true
 			panic(&interruptPanic{value: caught})
 		}
 	}()
@@ -483,7 +500,12 @@ func (rt *runtime) convertCallParameter(v Value, t reflect.Type) (reflect.Value,
 	case reflect.Slice:
 		if o := v.object(); o != nil {
 			if lv := o.get(propertyLength); lv.IsNumber() {
-				l := lv.number().int64
+				n := lv.number()
+				if n.kind != numberInteger || !isUint32(n.int64) {
+					return reflect.Zero(t), fmt.Errorf("invalid array length %v for %s", lv, t)
+				}
+				l := n.int64
+				rt.allocateDense(l, int64(t.Elem().Size()))
 
 				s := reflect.MakeSlice(t, int(l), int(l))
 
@@ -492,6 +514,7 @@ func (rt *runtime) convertCallParameter(v Value, t reflect.Type) (reflect.Value,
 				switch o.class {
 				case classArrayName:
 					for i := range l {
+						rt.checkInterrupt()
 						p, ok := o.property[strconv.FormatInt(i, 10)]
 						if !ok {
 							continue
@@ -519,6 +542,7 @@ func (rt *runtime) convertCallParameter(v Value, t reflect.Type) (reflect.Value,
 					}
 
 					for i := range l {
+						rt.checkInterrupt()
 						var p *property
 						if gslice {
 							p = goSliceGetOwnProperty(o, strconv.FormatInt(i, 10))
@@ -857,11 +881,11 @@ func (rt *runtime) newGoArray(value reflect.Value) *object {
 }
 
 func (rt *runtime) parse(filename string, src, sm interface{}) (*ast.Program, error) {
-	return parser.ParseFileWithSourceMap(nil, filename, src, sm, 0)
+	return parser.ParseFileWithSourceMap(nil, filename, src, sm, 0, rt.parserOptions()...)
 }
 
 func (rt *runtime) cmplParse(filename string, src, sm interface{}) (*nodeProgram, error) {
-	program, err := parser.ParseFileWithSourceMap(nil, filename, src, sm, 0)
+	program, err := parser.ParseFileWithSourceMap(nil, filename, src, sm, 0, rt.parserOptions()...)
 	if err != nil {
 		return nil, err
 	}
@@ -891,9 +915,11 @@ func (rt *runtime) cmplRunOrEval(src, sm interface{}, eval bool) (Value, error) 
 	if node == nil {
 		node = cmplParse(program)
 	}
+	depth := rt.nativeDepth
 	err = catchPanic(func() {
 		result = rt.cmplEvaluateNodeProgram(node, eval)
 	})
+	rt.nativeDepth = depth
 	switch result.kind {
 	case valueEmpty:
 		result = Value{}

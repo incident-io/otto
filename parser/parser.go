@@ -57,13 +57,14 @@ const (
 )
 
 type parser struct {
-	comments *ast.Comments
-	file     *file.File
-	scope    *scope
-	literal  string
-	str      string
-	errors   ErrorList
-	recover  struct {
+	comments  *ast.Comments
+	file      *file.File
+	scope     *scope
+	interrupt func()
+	literal   string
+	str       string
+	errors    ErrorList
+	recover   struct {
 		idx   file.Idx
 		count int
 	}
@@ -77,6 +78,9 @@ type parser struct {
 	chr               rune
 	insertSemicolon   bool
 	implicitSemicolon bool // Scratch when trying to seek to the next statement, etc.
+
+	depth  int
+	tokens int
 }
 
 // Parser is implemented by types which can parse JavaScript Code.
@@ -152,7 +156,7 @@ func ReadSourceMap(filename string, src interface{}) (*sourcemap.Consumer, error
 }
 
 // ParseFileWithSourceMap parses the sourcemap returning the resulting Program.
-func ParseFileWithSourceMap(fileSet *file.FileSet, filename string, javascriptSource, sourcemapSource interface{}, mode Mode) (*ast.Program, error) {
+func ParseFileWithSourceMap(fileSet *file.FileSet, filename string, javascriptSource, sourcemapSource interface{}, mode Mode, options ...Option) (*ast.Program, error) {
 	src, err := ReadSource(filename, javascriptSource)
 	if err != nil {
 		return nil, err
@@ -183,7 +187,10 @@ func ParseFileWithSourceMap(fileSet *file.FileSet, filename string, javascriptSo
 
 	p := newParser(filename, string(src), base, sm)
 	p.mode = mode
-	program, err := p.parse()
+	for _, option := range options {
+		option(p)
+	}
+	program, err := p.parseGuarded()
 	program.Comments = p.comments.CommentMap
 
 	return program, err
@@ -201,19 +208,22 @@ func ParseFileWithSourceMap(fileSet *file.FileSet, filename string, javascriptSo
 //
 //	// Parse some JavaScript, yielding a *ast.Program and/or an ErrorList
 //	program, err := parser.ParseFile(nil, "", `if (abc > 1) {}`, 0)
-func ParseFile(fileSet *file.FileSet, filename string, src interface{}, mode Mode) (*ast.Program, error) {
-	return ParseFileWithSourceMap(fileSet, filename, src, nil, mode)
+func ParseFile(fileSet *file.FileSet, filename string, src interface{}, mode Mode, options ...Option) (*ast.Program, error) {
+	return ParseFileWithSourceMap(fileSet, filename, src, nil, mode, options...)
 }
 
 // ParseFunction parses a given parameter list and body as a function and returns the
 // corresponding ast.FunctionLiteral node.
 //
 // The parameter list, if any, should be a comma-separated list of identifiers.
-func ParseFunction(parameterList, body string) (*ast.FunctionLiteral, error) {
+func ParseFunction(parameterList, body string, options ...Option) (*ast.FunctionLiteral, error) {
 	src := "(function(" + parameterList + ") {\n" + body + "\n})"
 
 	p := newParser("", src, 1, nil)
-	program, err := p.parse()
+	for _, option := range options {
+		option(p)
+	}
+	program, err := p.parseGuarded()
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +263,7 @@ func (p *parser) parse() (*ast.Program, error) {
 }
 
 func (p *parser) next() {
+	p.tick()
 	p.token, p.literal, p.idx = p.scan()
 }
 

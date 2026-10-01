@@ -22,6 +22,7 @@ func (rt *runtime) clone() *runtime {
 		stackLimit:  rt.stackLimit,
 		stringLimit: rt.stringLimit,
 		traceLimit:  rt.traceLimit,
+		allocLimit:  rt.allocLimit,
 	}
 
 	c := cloner{
