@@ -9,6 +9,11 @@ import (
 // parsing, compiling or evaluating it.
 const maxDepth = 3000
 
+// maxTemplateDepth bounds how deeply template literals nest inside each
+// other's substitutions. Each level re-scans its substitution's source, so
+// unbounded nesting makes parsing quadratic in the source length.
+const maxTemplateDepth = 32
+
 // interruptEvery is how many tokens are scanned between calls to the
 // interrupt callback.
 const interruptEvery = 1024
@@ -72,6 +77,19 @@ func (p *parser) tick() {
 	}
 	p.tokens++
 	if p.tokens%interruptEvery == 0 {
+		p.interrupt()
+	}
+}
+
+// tickBytes accounts for scanning n bytes of source without producing tokens,
+// counting every 64 bytes as one token.
+func (p *parser) tickBytes(n int) {
+	if p.interrupt == nil {
+		return
+	}
+	before := p.tokens / interruptEvery
+	p.tokens += n/64 + 1
+	if p.tokens/interruptEvery != before {
 		p.interrupt()
 	}
 }

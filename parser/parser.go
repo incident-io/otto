@@ -79,8 +79,9 @@ type parser struct {
 	insertSemicolon   bool
 	implicitSemicolon bool // Scratch when trying to seek to the next statement, etc.
 
-	depth  int
-	tokens int
+	depth         int
+	tokens        int
+	templateDepth int
 }
 
 // Parser is implemented by types which can parse JavaScript Code.

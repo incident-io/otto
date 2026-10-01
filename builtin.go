@@ -295,45 +295,60 @@ func builtinShouldEscape(chr byte) bool {
 const escapeBase16 = "0123456789ABCDEF"
 
 func builtinEscape(input string) string {
-	output := make([]byte, 0, len(input))
+	return escapeString(input, nil)
+}
+
+// escapeString implements escape, calling step, if not nil, with the length of
+// the output so far after each input character.
+func escapeString(input string, step func(int)) string {
+	var output strings.Builder
 	length := len(input)
 	for index := 0; index < length; {
 		if builtinShouldEscape(input[index]) {
 			chr, width := utf8.DecodeRuneInString(input[index:])
 			chr16 := utf16.Encode([]rune{chr})[0]
 			if 256 > chr16 {
-				output = append(output, '%',
-					escapeBase16[chr16>>4],
-					escapeBase16[chr16&15],
-				)
+				output.Write([]byte{'%', escapeBase16[chr16>>4], escapeBase16[chr16&15]})
 			} else {
-				output = append(output, '%', 'u',
+				output.Write([]byte{
+					'%', 'u',
 					escapeBase16[chr16>>12],
 					escapeBase16[(chr16>>8)&15],
 					escapeBase16[(chr16>>4)&15],
 					escapeBase16[chr16&15],
-				)
+				})
 			}
 			index += width
 		} else {
-			output = append(output, input[index])
+			output.WriteByte(input[index])
 			index++
 		}
+		if step != nil {
+			step(output.Len())
+		}
 	}
-	return string(output)
+	return output.String()
 }
 
 func builtinUnescape(input string) string {
-	output := make([]rune, 0, len(input))
+	return unescapeString(input, nil)
+}
+
+// unescapeString implements unescape, calling step, if not nil, with the length
+// of the output so far after each input character.
+func unescapeString(input string, step func(int)) string {
+	var output strings.Builder
 	length := len(input)
 	for index := 0; index < length; {
+		if step != nil {
+			step(output.Len())
+		}
 		if input[index] == '%' {
 			if index <= length-6 && input[index+1] == 'u' {
 				byte16, err := hex.DecodeString(input[index+2 : index+6])
 				if err == nil {
 					value := uint16(byte16[0])<<8 + uint16(byte16[1])
-					chr := utf16.Decode([]uint16{value})[0]
-					output = append(output, chr)
+					output.WriteRune(utf16.Decode([]uint16{value})[0])
 					index += 6
 					continue
 				}
@@ -341,28 +356,40 @@ func builtinUnescape(input string) string {
 			if index <= length-3 {
 				byte8, err := hex.DecodeString(input[index+1 : index+3])
 				if err == nil {
-					value := uint16(byte8[0])
-					chr := utf16.Decode([]uint16{value})[0]
-					output = append(output, chr)
+					output.WriteRune(rune(byte8[0]))
 					index += 3
 					continue
 				}
 			}
 		}
-		output = append(output, rune(input[index]))
+		output.WriteRune(rune(input[index]))
 		index++
 	}
-	return string(output)
+	return output.String()
+}
+
+// stringStep returns a step function for a native loop building a string,
+// which polls for interrupts and enforces the string length limit as the
+// output grows.
+func (rt *runtime) stringStep() func(int) {
+	i := 0
+	return func(length int) {
+		i++
+		rt.pollInterrupt(i)
+		if i%interruptEvery == 0 {
+			rt.checkStringLength(length)
+		}
+	}
 }
 
 func builtinGlobalEscape(call FunctionCall) Value {
-	output := builtinEscape(call.Argument(0).string())
+	output := escapeString(call.Argument(0).string(), call.runtime.stringStep())
 	call.runtime.allocateString(len(output))
 	return stringValue(output)
 }
 
 func builtinGlobalUnescape(call FunctionCall) Value {
-	output := builtinUnescape(call.Argument(0).string())
+	output := unescapeString(call.Argument(0).string(), call.runtime.stringStep())
 	call.runtime.allocateString(len(output))
 	return stringValue(output)
 }

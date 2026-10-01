@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -204,6 +205,8 @@ func (p *parser) parseTemplateLiteral(idx file.Idx, literal string) ast.Expressi
 	return node
 }
 
+const templateSubstitutionError = "invalid template substitution: "
+
 // parseTemplateExpression parses the source of a single ${ ... } substitution
 // into an expression using a sub-parser.
 func (p *parser) parseTemplateExpression(src string, idx file.Idx) ast.Expression {
@@ -212,12 +215,27 @@ func (p *parser) parseTemplateExpression(src string, idx file.Idx) ast.Expressio
 		return &ast.BadExpression{From: idx, To: idx}
 	}
 
+	if p.templateDepth >= maxTemplateDepth {
+		p.error(idx, "Maximum nesting depth exceeded")
+		return &ast.BadExpression{From: idx, To: idx}
+	}
+
+	p.tickBytes(len(src))
 	sub := newParser("", "("+src+"\n)", 1, nil)
 	sub.depth = p.depth
+	sub.templateDepth = p.templateDepth + 1
 	sub.interrupt = p.interrupt
+	sub.tokens = p.tokens
 	program, err := sub.parseGuarded()
+	p.tokens = sub.tokens
 	if err != nil {
-		p.error(idx, "invalid template substitution: %s", err.Error())
+		var list *ErrorList
+		if errors.As(err, &list) && len(*list) > 0 && strings.HasPrefix((*list)[0].Message, templateSubstitutionError) {
+			// Report the innermost error once, rather than once per level.
+			p.error(idx, "%s", (*list)[0].Message)
+		} else {
+			p.error(idx, templateSubstitutionError+"%s", err.Error())
+		}
 		return &ast.BadExpression{From: idx, To: idx}
 	}
 

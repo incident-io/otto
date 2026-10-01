@@ -43,6 +43,21 @@ func runWithDeadline(t *testing.T, vm *Otto, script string, timeout time.Duratio
 
 var errHalted = errors.New("halted")
 
+func TestTemplateNesting(t *testing.T) {
+	t.Parallel()
+	vm := New()
+	v, err := vm.Run("`a${`b${`c${1}`}`}`")
+	require.NoError(t, err)
+	require.Equal(t, "abc1", v.String())
+
+	start := time.Now()
+	n := 100000
+	_, err = vm.Run(strings.Repeat("`${", n) + "1" + strings.Repeat("}`", n))
+	require.ErrorContains(t, err, "Maximum nesting depth exceeded")
+	require.Less(t, len(err.Error()), 1000)
+	require.Less(t, time.Since(start), time.Second)
+}
+
 func TestParseInterrupt(t *testing.T) {
 	t.Parallel()
 	script := strings.Repeat("1,", 1<<22) + "1"
@@ -175,20 +190,23 @@ func TestAllocationLimit(t *testing.T) {
 func TestNativeInterrupt(t *testing.T) {
 	t.Parallel()
 	scripts := map[string]string{
-		"parse-float":       `var s = "9".repeat(1 << 22); for (;;) parseFloat(s + "x")`,
-		"split":             `var s = "x".repeat(1 << 24); for (;;) s.split("")`,
-		"json-parse":        `var s = "[" + "1,".repeat(1 << 22) + "1]"; for (;;) JSON.parse(s)`,
-		"regexp-backtrack":  `var s = "a".repeat(1 << 22); for (;;) /(a|aa)*(b|c|d)$/.test(s)`,
-		"regexp-match-all":  `var s = "a".repeat(1 << 24); for (;;) s.match(/a/g)`,
-		"regexp-replace":    `var s = "a".repeat(1 << 24); for (;;) s.replace(/a/g, "b")`,
-		"apply":             `for (;;) Math.max.apply(null, {length: 4294967295})`,
-		"encode-uri":        `var s = "\u0800".repeat(1 << 22); for (;;) encodeURIComponent(s)`,
-		"date-parse":        `var s = "1".repeat(1 << 24); for (;;) Date.parse(s)`,
-		"array-from-string": `var s = "a".repeat(1 << 24); for (;;) Array.from(s)`,
-		"string-index":      `var s = "\u0800".repeat(1 << 22); for (var n = 0;;) n += s[5].length`,
-		"sort":              `var a = []; for (var i = 0; i < 1e6; i++) a.push(1e6 - i); for (;;) a.slice().sort()`,
-		"recursive-catch":   `function f() { try { f() } catch (e) { f() } } f()`,
-		"eval-big-source":   `var s = "1+".repeat(1 << 22) + "1"; for (;;) eval(s)`,
+		"parse-float":          `var s = "9".repeat(1 << 22); for (;;) parseFloat(s + "x")`,
+		"split":                `var s = "x".repeat(1 << 24); for (;;) s.split("")`,
+		"json-parse":           `var s = "[" + "1,".repeat(1 << 22) + "1]"; for (;;) JSON.parse(s)`,
+		"regexp-backtrack":     `var s = "a".repeat(1 << 22); for (;;) /(a|aa)*(b|c|d)$/.test(s)`,
+		"regexp-match-all":     `var s = "a".repeat(1 << 24); for (;;) s.match(/a/g)`,
+		"regexp-replace":       `var s = "a".repeat(1 << 24); for (;;) s.replace(/a/g, "b")`,
+		"apply":                `for (;;) Math.max.apply(null, {length: 4294967295})`,
+		"encode-uri":           `var s = "\u0800".repeat(1 << 22); for (;;) encodeURIComponent(s)`,
+		"escape":               `var s = "\u0800".repeat(1 << 22); for (;;) escape(s)`,
+		"unescape":             `var s = "%u0800".repeat(1 << 22); for (;;) unescape(s)`,
+		"date-parse":           `var s = "1".repeat(1 << 24); for (;;) Date.parse(s)`,
+		"array-from-string":    `var s = "a".repeat(1 << 24); for (;;) Array.from(s)`,
+		"string-index":         `var s = "\u0800".repeat(1 << 22); for (var n = 0;;) n += s[5].length`,
+		"sort":                 `var a = []; for (var i = 0; i < 1e6; i++) a.push(1e6 - i); for (;;) a.slice().sort()`,
+		"recursive-catch":      `function f() { try { f() } catch (e) { f() } } f()`,
+		"eval-big-source":      `var s = "1+".repeat(1 << 22) + "1"; for (;;) eval(s)`,
+		"eval-nested-template": "var s = '`${'.repeat(1 << 20) + '1' + '}`'.repeat(1 << 20); for (;;) eval(s)",
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {
