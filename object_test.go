@@ -321,7 +321,7 @@ func TestObject_assign(t *testing.T) {
 		test(`JSON.stringify(Object.assign({}, {a: 1}))`, "{\"a\":1}")
 
 		// Test 3: Multiple sources with later properties overriding earlier ones.
-		test(`JSON.stringify(Object.assign({a: 1, c: 5}, {a: 2}, {b: 3}))`, "{\"a\":2,\"b\":3,\"c\":5}")
+		test(`JSON.stringify(Object.assign({a: 1, c: 5}, {a: 2}, {b: 3}))`, "{\"a\":2,\"c\":5,\"b\":3}")
 
 		// Test 4: Merging objects with overlapping keys.
 		test(`JSON.stringify(Object.assign({a: 1, b: 2}, {b: 3, c: 4}))`, "{\"a\":1,\"b\":3,\"c\":4}")

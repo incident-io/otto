@@ -153,13 +153,7 @@ func builtinMathMin(call FunctionCall) Value {
 }
 
 func builtinMathPow(call FunctionCall) Value {
-	// TODO Make sure this works according to the specification (15.8.2.13)
-	x := call.Argument(0).float64()
-	y := call.Argument(1).float64()
-	if math.Abs(x) == 1 && math.IsInf(y, 0) {
-		return NaNValue()
-	}
-	return float64Value(math.Pow(x, y))
+	return float64Value(exponentiate(call.Argument(0).float64(), call.Argument(1).float64()))
 }
 
 func builtinMathRandom(call FunctionCall) Value {
@@ -259,6 +253,10 @@ func builtinMathHypot(call FunctionCall) Value {
 		sum += scaled * scaled
 	}
 	return float64Value(maxAbs * math.Sqrt(sum))
+}
+
+func builtinMathImul(call FunctionCall) Value {
+	return int32Value(toInt32(call.Argument(0)) * toInt32(call.Argument(1)))
 }
 
 func builtinMathClz32(call FunctionCall) Value {

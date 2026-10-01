@@ -136,6 +136,22 @@ tokens:
     symbol: "?"
   - name: ARROW
     symbol: "=>"
+  - name: QUESTION_DOT
+    symbol: "?."
+
+  - group: ES2016+ operators
+  - name: EXPONENT
+    symbol: "**"
+  - name: EXPONENT_ASSIGN
+    symbol: "**="
+  - name: NULLISH
+    symbol: "??"
+  - name: LOGICAL_AND_ASSIGN
+    symbol: "&&="
+  - name: LOGICAL_OR_ASSIGN
+    symbol: "||="
+  - name: NULLISH_ASSIGN
+    symbol: "??="
 
   - group: Basic flow - keywords below here
   - name: _

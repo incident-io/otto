@@ -1,7 +1,10 @@
 package otto
 
 import (
+	"cmp"
 	"encoding/json"
+	"math"
+	"slices"
 )
 
 type objectClass struct {
@@ -20,13 +23,65 @@ type objectClass struct {
 }
 
 func objectEnumerate(obj *object, all bool, each func(string) bool) {
-	for _, name := range obj.propertyOrder {
+	for _, name := range ownPropertyKeyOrder(obj.propertyOrder) {
 		if all || obj.property[name].enumerable() {
 			if !each(name) {
 				return
 			}
 		}
 	}
+}
+
+// ownPropertyKeyOrder returns names in OrdinaryOwnPropertyKeys order: array
+// indices ascending, then the remaining names in insertion order.
+func ownPropertyKeyOrder(names []string) []string {
+	indices := 0
+	for _, name := range names {
+		if _, ok := arrayIndexKey(name); ok {
+			indices++
+		}
+	}
+	if indices == 0 {
+		return names
+	}
+
+	ordered := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := arrayIndexKey(name); ok {
+			ordered = append(ordered, name)
+		}
+	}
+	slices.SortStableFunc(ordered, func(a, b string) int {
+		x, _ := arrayIndexKey(a)
+		y, _ := arrayIndexKey(b)
+		return cmp.Compare(x, y)
+	})
+	for _, name := range names {
+		if _, ok := arrayIndexKey(name); !ok {
+			ordered = append(ordered, name)
+		}
+	}
+	return ordered
+}
+
+// arrayIndexKey reports whether name is the canonical string of an array
+// index, a uint32 below 2^32-1.
+func arrayIndexKey(name string) (uint32, bool) {
+	if len(name) == 0 || len(name) > 10 || (len(name) > 1 && name[0] == '0') {
+		return 0, false
+	}
+	var value uint64
+	for i := range len(name) {
+		chr := name[i]
+		if chr < '0' || chr > '9' {
+			return 0, false
+		}
+		value = value*10 + uint64(chr-'0')
+	}
+	if value >= math.MaxUint32 {
+		return 0, false
+	}
+	return uint32(value), true
 }
 
 var classObject,

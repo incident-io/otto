@@ -17,6 +17,10 @@ func parseNumber(value string) float64 {
 	if value == "" {
 		return 0
 	}
+	if strings.ContainsRune(value, '_') {
+		// strconv accepts digit separators that StringToNumber does not.
+		return math.NaN()
+	}
 
 	var parseFloat bool
 	switch {

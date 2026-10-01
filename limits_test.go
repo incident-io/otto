@@ -152,6 +152,7 @@ func TestStringLengthLimitCoverage(t *testing.T) {
 		"error-string": "var s = 'x'.repeat(1 << 20); var e = new Error(s); e.name = s; String(e)",
 		"pad":          "''.padStart(4 << 20, 'x')",
 		"repeat":       "'x'.repeat(4 << 20)",
+		"json-indent":  "var a = 1; for (var i = 0; i < 1000; i++) a = [a]; JSON.stringify(a, null, 10)",
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {

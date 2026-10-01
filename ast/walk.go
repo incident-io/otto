@@ -96,6 +96,10 @@ func Walk(v Visitor, n Node) {
 			Walk(v, n.Left)
 			Walk(v, n.Identifier)
 		}
+	case *OptionalChain:
+		if n != nil {
+			Walk(v, n.Expression)
+		}
 	case *EmptyExpression:
 	case *EmptyStatement:
 	case *ExpressionStatement:

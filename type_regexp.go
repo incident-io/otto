@@ -2,6 +2,7 @@ package otto
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/incident-io/otto/internal/regexp"
 	"github.com/incident-io/otto/parser"
@@ -23,6 +24,7 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 	global := false
 	ignoreCase := false
 	multiline := false
+	dotAll := false
 	re2flags := ""
 
 	// TODO Maybe clean up the panicking here... TypeError, SyntaxError, ?
@@ -46,6 +48,12 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 			}
 			ignoreCase = true
 			re2flags += "i"
+		case 's':
+			if dotAll {
+				panic(rt.panicSyntaxError("newRegExpObject: %s %s", pattern, flags))
+			}
+			dotAll = true
+			re2flags += "s"
 		}
 	}
 
@@ -77,6 +85,14 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 	o.defineProperty("global", boolValue(global), 0, false)
 	o.defineProperty("ignoreCase", boolValue(ignoreCase), 0, false)
 	o.defineProperty("multiline", boolValue(multiline), 0, false)
+	o.defineProperty("dotAll", boolValue(dotAll), 0, false)
+	canonicalFlags := ""
+	for _, flag := range "dgimsuvy" {
+		if strings.ContainsRune(flags, flag) {
+			canonicalFlags += string(flag)
+		}
+	}
+	o.defineProperty("flags", stringValue(canonicalFlags), 0o001, false)
 	o.defineProperty("lastIndex", intValue(0), 0o100, false)
 	o.defineProperty("source", stringValue(pattern), 0, false)
 	return o
@@ -125,7 +141,7 @@ func execRegExp(this *object, target string) (bool, []int) {
 	return true, result
 }
 
-func execResultToArray(rt *runtime, target string, result []int) *object {
+func execResultToArray(rt *runtime, target string, result []int, names []string) *object {
 	captureCount := len(result) / 2
 	valueArray := make([]Value, captureCount)
 	for index := range captureCount {
@@ -144,5 +160,18 @@ func execResultToArray(rt *runtime, target string, result []int) *object {
 	match := rt.newArrayOf(valueArray)
 	match.defineProperty("input", stringValue(target), 0o111, false)
 	match.defineProperty("index", intValue(matchIndex), 0o111, false)
+	groups := Value{}
+	for index, name := range names {
+		if name == "" || index >= captureCount {
+			continue
+		}
+		if !groups.IsObject() {
+			groupsObject := rt.newObject()
+			groupsObject.prototype = nil
+			groups = objectValue(groupsObject)
+		}
+		groups.object().defineProperty(name, valueArray[index], 0o111, false)
+	}
+	match.defineProperty("groups", groups, 0o111, false)
 	return match
 }

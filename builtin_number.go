@@ -3,6 +3,7 @@ package otto
 import (
 	"math"
 	"strconv"
+	"strings"
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
@@ -69,11 +70,22 @@ func builtinNumberToExponential(call FunctionCall) Value {
 	precision := float64(-1)
 	if value := call.Argument(0); value.IsDefined() {
 		precision = toIntegerFloat(value)
-		if 0 > precision {
-			panic(call.runtime.panicRangeError("toString() radix must be between 2 and 36"))
+		if 0 > precision || precision > 100 {
+			panic(call.runtime.panicRangeError("toExponential() argument must be between 0 and 100"))
 		}
 	}
-	return stringValue(strconv.FormatFloat(call.This.float64(), 'e', int(precision), 64))
+	if value := call.This.float64(); math.IsInf(value, 0) {
+		return stringValue(floatToString(value, 64))
+	}
+	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(call.This.float64(), 'e', int(precision), 64), "e")
+	if exponent == "" {
+		return stringValue(mantissa)
+	}
+	digits := strings.TrimLeft(exponent[1:], "0")
+	if digits == "" {
+		digits = "0"
+	}
+	return stringValue(mantissa + "e" + exponent[:1] + digits)
 }
 
 func builtinNumberToPrecision(call FunctionCall) Value {
@@ -85,17 +97,33 @@ func builtinNumberToPrecision(call FunctionCall) Value {
 		return stringValue(call.This.string())
 	}
 	precision := toIntegerFloat(value)
-	if 1 > precision {
-		panic(call.runtime.panicRangeError("toPrecision() precision must be greater than 1"))
+	if 1 > precision || precision > 100 {
+		panic(call.runtime.panicRangeError("toPrecision() argument must be between 1 and 100"))
 	}
-	return stringValue(strconv.FormatFloat(call.This.float64(), 'g', int(precision), 64))
+	number := call.This.float64()
+	if math.IsInf(number, 0) {
+		return stringValue(floatToString(number, 64))
+	}
+	digits := int(precision)
+	exponential := strconv.FormatFloat(number, 'e', digits-1, 64)
+	mantissa, exponentPart, _ := strings.Cut(exponential, "e")
+	exponent, _ := strconv.Atoi(exponentPart)
+	if exponent < -6 || exponent >= digits {
+		sign := "+"
+		if exponent < 0 {
+			sign, exponent = "-", -exponent
+		}
+		return stringValue(mantissa + "e" + sign + strconv.Itoa(exponent))
+	}
+	return stringValue(strconv.FormatFloat(number, 'f', digits-1-exponent, 64))
 }
 
 func builtinNumberIsNaN(call FunctionCall) Value {
 	if len(call.ArgumentList) < 1 {
 		return boolValue(false)
 	}
-	return boolValue(call.Argument(0).IsNaN())
+	value := call.Argument(0)
+	return boolValue(value.IsNumber() && value.IsNaN())
 }
 
 func builtinNumberIsInteger(call FunctionCall) Value {
