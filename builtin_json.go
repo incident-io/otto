@@ -243,25 +243,27 @@ func builtinJSONStringifyWalk(ctx builtinJSONStringifyContext, key string, holde
 			array := make([]interface{}, 0, preallocation(int64(length)))
 			for index := range length {
 				ctx.call.runtime.checkInterrupt()
+				ctx.call.runtime.allocate(allocValueCost)
 				name := arrayIndexToString(int64(index))
 				value, _ := builtinJSONStringifyWalk(ctx, name, objHolder)
 				array = append(array, value)
 			}
 			return array, true
 		} else if objHolder.class != classFunctionName {
+			ctx.call.runtime.allocate(allocObjectCost)
 			obj := &jsonObject{}
 			if ctx.propertyList != nil {
 				for _, name := range ctx.propertyList {
 					value, exists := builtinJSONStringifyWalk(ctx, name, objHolder)
 					if exists {
-						obj.set(name, value)
+						obj.set(ctx.call.runtime, name, value)
 					}
 				}
 			} else {
 				objHolder.enumerate(false, func(name string) bool {
 					value, exists := builtinJSONStringifyWalk(ctx, name, objHolder)
 					if exists {
-						obj.set(name, value)
+						obj.set(ctx.call.runtime, name, value)
 					}
 					return true
 				})
@@ -280,7 +282,7 @@ type jsonObject struct {
 	values []interface{}
 }
 
-func (o *jsonObject) set(key string, value interface{}) {
+func (o *jsonObject) set(rt *runtime, key string, value interface{}) {
 	if i, exists := o.index[key]; exists {
 		o.values[i] = value
 		return
@@ -288,6 +290,7 @@ func (o *jsonObject) set(key string, value interface{}) {
 	if o.index == nil {
 		o.index = map[string]int{}
 	}
+	rt.allocate(allocPropertyCost)
 	o.index[key] = len(o.keys)
 	o.keys = append(o.keys, key)
 	o.values = append(o.values, value)
