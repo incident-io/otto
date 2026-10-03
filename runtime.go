@@ -69,11 +69,15 @@ type runtime struct {
 	nativeDepth  int
 	allocLimit   int64
 	allocated    int64
+	maxString    int
 	unwinding    bool // an interrupt or resource limit panic is unwinding the stack
 	lck          sync.Mutex
 }
 
 func (rt *runtime) checkStringLength(length int) {
+	if length > rt.maxString {
+		rt.maxString = length
+	}
 	if rt.stringLimit > 0 && length > rt.stringLimit {
 		panic(rt.panicRangeError("Invalid string length"))
 	}
