@@ -405,6 +405,30 @@ func (o Otto) SetAllocationLimit(limit int64) {
 	o.runtime.allocated = 0
 }
 
+// ResourceUsage is an estimate of what scripts run in an Otto have used. It
+// is not a measurement of process memory: Go's own overheads (garbage not
+// yet collected, map buckets, buffer growth) are not included, and memory
+// that has since been freed still counts.
+type ResourceUsage struct {
+	// AllocatedBytes is the running total charged against the allocation
+	// limit since it was last set. It is only counted while a limit is set.
+	AllocatedBytes int64
+
+	// MaxStringBytes is the length, in bytes of UTF-8, of the longest string
+	// checked against the string length limit, including any that exceeded
+	// it. It is counted whether or not a limit is set.
+	MaxStringBytes int
+}
+
+// ResourceUsage returns an estimate of the resources used so far by scripts
+// run in this Otto.
+func (o Otto) ResourceUsage() ResourceUsage {
+	return ResourceUsage{
+		AllocatedBytes: o.runtime.allocated,
+		MaxStringBytes: o.runtime.maxString,
+	}
+}
+
 // SetStackTraceLimit sets an upper limit to the number of stack frames that
 // otto will use when formatting an error's stack trace. By default, the limit
 // is 10. This is consistent with V8 and SpiderMonkey.
