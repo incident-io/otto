@@ -10,9 +10,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/incident-io/otto/ast"
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/token"
+	"github.com/robertkrimen/otto/ast"
+	"github.com/robertkrimen/otto/file"
+	"github.com/robertkrimen/otto/token"
 )
 
 type chr struct { //nolint:unused

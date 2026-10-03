@@ -1,4 +1,4 @@
-module github.com/incident-io/otto
+module github.com/robertkrimen/otto
 
 go 1.22
 
