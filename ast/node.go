@@ -230,6 +230,7 @@ type FunctionLiteral struct {
 	Source          string
 	DeclarationList []Declaration
 	Function        file.Idx
+	IsArrow         bool
 }
 
 // Idx0 implements Node.
@@ -350,16 +351,20 @@ func (*ObjectLiteral) expression() {}
 
 // ParameterList represents a parameter list.
 type ParameterList struct {
-	List    []*Identifier
-	Opening file.Idx
-	Closing file.Idx
+	Rest     *Identifier
+	List     []*Identifier
+	Defaults []Expression
+	Targets  []Expression
+	Opening  file.Idx
+	Closing  file.Idx
 }
 
 // Property represents a property.
 type Property struct {
-	Value Expression
-	Key   string
-	Kind  string
+	Value         Expression
+	KeyExpression Expression
+	Key           string
+	Kind          string
 }
 
 // RegExpLiteral represents a regular expression literal.
@@ -422,6 +427,153 @@ func (sl *StringLiteral) Idx1() file.Idx {
 // expression implements Expression.
 func (*StringLiteral) expression() {}
 
+// ArrayPattern represents an array destructuring pattern, e.g. [a, b = 1, ...rest].
+type ArrayPattern struct {
+	Rest         Expression
+	Elements     []Expression
+	LeftBracket  file.Idx
+	RightBracket file.Idx
+}
+
+// Idx0 implements Node.
+func (ap *ArrayPattern) Idx0() file.Idx { return ap.LeftBracket }
+
+// Idx1 implements Node.
+func (ap *ArrayPattern) Idx1() file.Idx { return ap.RightBracket + 1 }
+
+// expression implements Expression.
+func (*ArrayPattern) expression() {}
+
+// ObjectPattern represents an object destructuring pattern, e.g. {a, b: c = 1}.
+type ObjectPattern struct {
+	Rest       Expression
+	Properties []*PatternProperty
+	LeftBrace  file.Idx
+	RightBrace file.Idx
+}
+
+// Idx0 implements Node.
+func (op *ObjectPattern) Idx0() file.Idx { return op.LeftBrace }
+
+// Idx1 implements Node.
+func (op *ObjectPattern) Idx1() file.Idx { return op.RightBrace + 1 }
+
+// expression implements Expression.
+func (*ObjectPattern) expression() {}
+
+// PatternProperty is a single property of an ObjectPattern.
+type PatternProperty struct {
+	KeyExpression Expression
+	Target        Expression
+	Key           string
+}
+
+// ClassLiteral represents a class definition (declaration or expression).
+type ClassLiteral struct {
+	SuperClass Expression
+	Name       *Identifier
+	Source     string
+	Body       []*ClassElement
+	Class      file.Idx
+	RightBrace file.Idx
+}
+
+// Idx0 implements Node.
+func (cl *ClassLiteral) Idx0() file.Idx { return cl.Class }
+
+// Idx1 implements Node.
+func (cl *ClassLiteral) Idx1() file.Idx { return cl.RightBrace + 1 }
+
+// expression implements Expression.
+func (*ClassLiteral) expression() {}
+
+// statement implements Statement (a class declaration).
+func (*ClassLiteral) statement() {}
+
+// ClassElement is a single member of a class body.
+type ClassElement struct {
+	KeyExpression Expression
+	Method        *FunctionLiteral
+	Kind          string
+	Key           string
+	Static        bool
+}
+
+// TaggedTemplateExpression represents a tagged template, e.g. tag`a${b}c`.
+type TaggedTemplateExpression struct {
+	Tag      Expression
+	Template *TemplateLiteral
+}
+
+// Idx0 implements Node.
+func (tte *TaggedTemplateExpression) Idx0() file.Idx { return tte.Tag.Idx0() }
+
+// Idx1 implements Node.
+func (tte *TaggedTemplateExpression) Idx1() file.Idx { return tte.Template.Idx1() }
+
+// expression implements Expression.
+func (*TaggedTemplateExpression) expression() {}
+
+// SuperExpression represents the `super` keyword.
+type SuperExpression struct {
+	Idx file.Idx
+}
+
+// Idx0 implements Node.
+func (se *SuperExpression) Idx0() file.Idx { return se.Idx }
+
+// Idx1 implements Node.
+func (se *SuperExpression) Idx1() file.Idx { return se.Idx + 5 }
+
+// expression implements Expression.
+func (*SuperExpression) expression() {}
+
+// SpreadExpression represents a spread element, e.g. ...arr in a call argument
+// list or array literal.
+type SpreadExpression struct {
+	Value Expression
+	Idx   file.Idx
+}
+
+// Idx0 implements Node.
+func (se *SpreadExpression) Idx0() file.Idx {
+	return se.Idx
+}
+
+// Idx1 implements Node.
+func (se *SpreadExpression) Idx1() file.Idx {
+	return se.Value.Idx1()
+}
+
+// expression implements Expression.
+func (*SpreadExpression) expression() {}
+
+// TemplateLiteral represents a template literal, e.g. `abc${def}ghi`.
+//
+// Strings holds the cooked string segments and always contains exactly one
+// more element than Expressions; the final string is rendered by interleaving
+// the two: Strings[0] + Expressions[0] + Strings[1] + ... + Strings[n].
+type TemplateLiteral struct {
+	Strings     []string
+	Raw         []string // raw (un-cooked) string segments, parallel to Strings
+	Expressions []Expression
+	OpenQuote   file.Idx
+	CloseQuote  file.Idx
+}
+
+// Idx0 implements Node.
+func (tl *TemplateLiteral) Idx0() file.Idx {
+	return tl.OpenQuote
+}
+
+// Idx1 implements Node.
+func (tl *TemplateLiteral) Idx1() file.Idx {
+	return tl.CloseQuote + 1
+}
+
+// expression implements Expression.
+func (*TemplateLiteral) expression() {}
+
 // ThisExpression represents a this expression.
 type ThisExpression struct {
 	Idx file.Idx
@@ -470,6 +622,7 @@ func (*UnaryExpression) expression() {}
 // VariableExpression represents a variable expression.
 type VariableExpression struct {
 	Initializer Expression
+	Target      Expression
 	Name        string
 	Idx         file.Idx
 }
@@ -679,6 +832,12 @@ type ForInStatement struct {
 	Source Expression
 	Body   Statement
 	For    file.Idx
+	// Lexical is token.LET or token.CONST when Into declares a block-scoped
+	// loop variable.
+	Lexical token.Token
+	// Of distinguishes a for-of loop (iterating values) from a for-in loop
+	// (iterating keys).
+	Of bool
 }
 
 // Idx0 implements Node.
@@ -701,6 +860,9 @@ type ForStatement struct {
 	Test        Expression
 	Body        Statement
 	For         file.Idx
+	// Lexical is token.LET or token.CONST when the initializer declares
+	// block-scoped loop variables, requiring a per-iteration environment.
+	Lexical token.Token
 }
 
 // Idx0 implements Node.
@@ -883,6 +1045,26 @@ func (vs *VariableStatement) Idx1() file.Idx {
 
 // expression implements Statement.
 func (*VariableStatement) statement() {}
+
+// LexicalDeclaration represents a block-scoped let or const declaration.
+type LexicalDeclaration struct {
+	List  []Expression
+	Idx   file.Idx
+	Token token.Token // token.LET or token.CONST
+}
+
+// Idx0 implements Node.
+func (ld *LexicalDeclaration) Idx0() file.Idx {
+	return ld.Idx
+}
+
+// Idx1 implements Node.
+func (ld *LexicalDeclaration) Idx1() file.Idx {
+	return ld.List[len(ld.List)-1].Idx1()
+}
+
+// statement implements Statement.
+func (*LexicalDeclaration) statement() {}
 
 // WhileStatement represents a while statement.
 type WhileStatement struct {

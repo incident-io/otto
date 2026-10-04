@@ -2,6 +2,8 @@ package parser
 
 import (
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/robertkrimen/otto/ast"
 	"github.com/robertkrimen/otto/file"
@@ -41,10 +43,18 @@ func (p *parser) parsePrimaryExpression() ast.Expression {
 				}
 			}
 		}
-		return &ast.Identifier{
+		identifier := &ast.Identifier{
 			Name: literal,
 			Idx:  idx,
 		}
+		if p.token == token.ARROW {
+			return p.parseArrowFunction(idx, &ast.ParameterList{
+				List:    []*ast.Identifier{identifier},
+				Opening: idx,
+				Closing: identifier.Idx1(),
+			})
+		}
+		return identifier
 	case token.NULL:
 		p.next()
 		return &ast.NullLiteral{
@@ -78,6 +88,8 @@ func (p *parser) parsePrimaryExpression() ast.Expression {
 			Literal: literal,
 			Value:   value,
 		}
+	case token.TEMPLATE:
+		return p.parseTemplateLiteral(idx, literal)
 	case token.NUMBER:
 		p.next()
 		value, err := parseNumberLiteral(literal)
@@ -97,12 +109,30 @@ func (p *parser) parsePrimaryExpression() ast.Expression {
 	case token.LEFT_BRACKET:
 		return p.parseArrayLiteral()
 	case token.LEFT_PARENTHESIS:
-		p.expect(token.LEFT_PARENTHESIS)
+		opening := p.expect(token.LEFT_PARENTHESIS)
+		if p.token == token.RIGHT_PARENTHESIS {
+			// Either an empty arrow parameter list, "() => ...", or a
+			// syntax error (an empty parenthesised expression).
+			closing := p.expect(token.RIGHT_PARENTHESIS)
+			if p.token == token.ARROW {
+				return p.parseArrowFunction(opening, &ast.ParameterList{Opening: opening, Closing: closing})
+			}
+			p.error(opening, "Unexpected token )")
+			return &ast.BadExpression{From: opening, To: closing}
+		}
 		expression := p.parseExpression()
 		if p.mode&StoreComments != 0 {
 			p.comments.Unset()
 		}
-		p.expect(token.RIGHT_PARENTHESIS)
+		closing := p.expect(token.RIGHT_PARENTHESIS)
+		if p.token == token.ARROW {
+			params, ok := arrowParameterList(expression, opening, closing)
+			if !ok {
+				p.error(expression.Idx0(), "malformed arrow function parameter list")
+				return &ast.BadExpression{From: opening, To: p.idx}
+			}
+			return p.parseArrowFunction(opening, params)
+		}
 		return expression
 	case token.THIS:
 		p.next()
@@ -111,11 +141,232 @@ func (p *parser) parsePrimaryExpression() ast.Expression {
 		}
 	case token.FUNCTION:
 		return p.parseFunction(false)
+	case token.CLASS:
+		return p.parseClass(false)
+	case token.SUPER:
+		p.next()
+		return &ast.SuperExpression{Idx: idx}
 	}
 
 	p.errorUnexpectedToken(p.token)
 	p.nextStatement()
 	return &ast.BadExpression{From: idx, To: p.idx}
+}
+
+// parseTemplateLiteral builds a TemplateLiteral node from the raw template
+// source (including the enclosing backticks). It splits the literal into cooked
+// string segments and embedded ${ ... } expressions, parsing each embedded
+// expression with a sub-parser.
+func (p *parser) parseTemplateLiteral(idx file.Idx, literal string) ast.Expression {
+	closeQuote := file.Idx(int(idx) + len(literal) - 1)
+	p.next()
+
+	node := &ast.TemplateLiteral{
+		OpenQuote:  idx,
+		CloseQuote: closeQuote,
+	}
+
+	// Strip the enclosing backticks.
+	inner := ""
+	if len(literal) >= 2 {
+		inner = literal[1 : len(literal)-1]
+	}
+
+	var cooked strings.Builder
+	rawStart := 0
+	i := 0
+	for i < len(inner) {
+		switch {
+		case inner[i] == '\\':
+			i = cookTemplateEscape(&cooked, inner, i+1)
+		case inner[i] == '$' && i+1 < len(inner) && inner[i+1] == '{':
+			node.Strings = append(node.Strings, cooked.String())
+			node.Raw = append(node.Raw, inner[rawStart:i])
+			cooked.Reset()
+			src, next, err := extractTemplateSubstitution(inner, i+2)
+			if err != nil {
+				p.error(idx, err.Error())
+				return &ast.BadExpression{From: idx, To: closeQuote}
+			}
+			node.Expressions = append(node.Expressions, p.parseTemplateExpression(src, idx))
+			i = next
+			rawStart = next
+		default:
+			cooked.WriteByte(inner[i])
+			i++
+		}
+	}
+	node.Strings = append(node.Strings, cooked.String())
+	node.Raw = append(node.Raw, inner[rawStart:])
+
+	return node
+}
+
+// parseTemplateExpression parses the source of a single ${ ... } substitution
+// into an expression using a sub-parser.
+func (p *parser) parseTemplateExpression(src string, idx file.Idx) ast.Expression {
+	if strings.TrimSpace(src) == "" {
+		p.error(idx, "unexpected token in template literal")
+		return &ast.BadExpression{From: idx, To: idx}
+	}
+
+	program, err := ParseFile(nil, "", "("+src+"\n)", 0)
+	if err != nil {
+		p.error(idx, "invalid template substitution: %s", err.Error())
+		return &ast.BadExpression{From: idx, To: idx}
+	}
+
+	stmt, ok := program.Body[0].(*ast.ExpressionStatement)
+	if !ok || stmt.Expression == nil {
+		p.error(idx, "invalid template substitution")
+		return &ast.BadExpression{From: idx, To: idx}
+	}
+
+	return stmt.Expression
+}
+
+// extractTemplateSubstitution returns the source of a ${ ... } substitution
+// beginning at start (just past the opening brace) and the index just past its
+// matching closing brace. Nested braces, string literals and nested template
+// literals are skipped so their contents do not terminate the substitution.
+func extractTemplateSubstitution(s string, start int) (string, int, error) {
+	depth := 1
+	i := start
+	for i < len(s) {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start:i], i + 1, nil
+			}
+		case '\\':
+			i++ // skip the escaped character
+		case '`':
+			j, err := skipNestedTemplate(s, i+1)
+			if err != nil {
+				return "", 0, err
+			}
+			i = j
+			continue
+		case '\'', '"':
+			j, err := skipNestedString(s, i)
+			if err != nil {
+				return "", 0, err
+			}
+			i = j
+			continue
+		}
+		i++
+	}
+	return "", 0, errInvalidTemplate
+}
+
+// skipNestedTemplate returns the index just past the closing backtick of a
+// template literal whose body begins at i.
+func skipNestedTemplate(s string, i int) (int, error) {
+	for i < len(s) {
+		switch s[i] {
+		case '`':
+			return i + 1, nil
+		case '\\':
+			i++
+		case '$':
+			if i+1 < len(s) && s[i+1] == '{' {
+				j, err := extractNestedSubstitution(s, i+2)
+				if err != nil {
+					return 0, err
+				}
+				i = j
+				continue
+			}
+		}
+		i++
+	}
+	return 0, errInvalidTemplate
+}
+
+// extractNestedSubstitution is like extractTemplateSubstitution but returns
+// only the index past the closing brace.
+func extractNestedSubstitution(s string, start int) (int, error) {
+	_, next, err := extractTemplateSubstitution(s, start)
+	return next, err
+}
+
+// skipNestedString returns the index just past the closing quote of a string
+// literal whose opening quote is at i.
+func skipNestedString(s string, i int) (int, error) {
+	quote := s[i]
+	i++
+	for i < len(s) {
+		switch s[i] {
+		case quote:
+			return i + 1, nil
+		case '\\':
+			i++
+		}
+		i++
+	}
+	return 0, errInvalidTemplate
+}
+
+// cookTemplateEscape interprets the escape sequence whose character follows the
+// backslash at s[i], writing the cooked result to b, and returns the index just
+// past the consumed escape.
+func cookTemplateEscape(b *strings.Builder, s string, i int) int {
+	if i >= len(s) {
+		return i
+	}
+	switch c := s[i]; c {
+	case 'n':
+		b.WriteByte('\n')
+	case 'r':
+		b.WriteByte('\r')
+	case 't':
+		b.WriteByte('\t')
+	case 'b':
+		b.WriteByte('\b')
+	case 'f':
+		b.WriteByte('\f')
+	case 'v':
+		b.WriteByte('\v')
+	case '0':
+		b.WriteByte(0)
+	case 'x':
+		if i+3 <= len(s) {
+			if v, err := strconv.ParseUint(s[i+1:i+3], 16, 32); err == nil {
+				b.WriteRune(rune(v))
+				return i + 3
+			}
+		}
+		b.WriteByte(c)
+	case 'u':
+		if i+1 < len(s) && s[i+1] == '{' {
+			if end := strings.IndexByte(s[i+2:], '}'); end >= 0 {
+				if v, err := strconv.ParseUint(s[i+2:i+2+end], 16, 32); err == nil {
+					b.WriteRune(rune(v))
+					return i + 2 + end + 1
+				}
+			}
+		} else if i+5 <= len(s) {
+			if v, err := strconv.ParseUint(s[i+1:i+5], 16, 32); err == nil {
+				b.WriteRune(rune(v))
+				return i + 5
+			}
+		}
+		b.WriteByte(c)
+	case '\n':
+		return i + 1 // line continuation
+	case '\r':
+		if i+1 < len(s) && s[i+1] == '\n' {
+			return i + 2
+		}
+		return i + 1
+	default:
+		b.WriteByte(c)
+	}
+	return i + 1
 }
 
 func (p *parser) parseRegExpLiteral() *ast.RegExpLiteral {
@@ -171,6 +422,24 @@ func (p *parser) parseRegExpLiteral() *ast.RegExpLiteral {
 }
 
 func (p *parser) parseVariableDeclaration(declarationList *[]*ast.VariableExpression) ast.Expression {
+	// Destructuring binding: var/let/const [a, b] = ... or { a, b } = ...
+	if p.token == token.LEFT_BRACKET || p.token == token.LEFT_BRACE {
+		idx := p.idx
+		target := p.parseBindingTarget()
+		node := &ast.VariableExpression{
+			Idx:    idx,
+			Target: target,
+		}
+		if declarationList != nil {
+			*declarationList = append(*declarationList, node)
+		}
+		if p.token == token.ASSIGN {
+			p.next()
+			node.Initializer = p.parseAssignmentExpression()
+		}
+		return node
+	}
+
 	if p.token != token.IDENTIFIER {
 		idx := p.expect(token.IDENTIFIER)
 		p.nextStatement()
@@ -201,6 +470,192 @@ func (p *parser) parseVariableDeclaration(declarationList *[]*ast.VariableExpres
 	}
 
 	return node
+}
+
+// literalToPattern reinterprets an array or object literal that appears on the
+// left of a destructuring assignment as a binding pattern. It returns false if
+// the literal cannot be a valid assignment pattern.
+func literalToPattern(expr ast.Expression) (ast.Expression, bool) {
+	switch lit := expr.(type) {
+	case *ast.ArrayLiteral:
+		pattern := &ast.ArrayPattern{LeftBracket: lit.LeftBracket, RightBracket: lit.RightBracket}
+		for _, element := range lit.Value {
+			// A rest element must be the final element: no further element,
+			// elision, or rest may follow it ("[...x, y]" is a syntax error).
+			if pattern.Rest != nil {
+				return nil, false
+			}
+			switch el := element.(type) {
+			case *ast.EmptyExpression:
+				pattern.Elements = append(pattern.Elements, nil)
+			case *ast.SpreadExpression:
+				// A rest element binds the remainder and so cannot carry a
+				// default initializer: "[...x = 1]" is a syntax error.
+				if _, isDefault := el.Value.(*ast.AssignExpression); isDefault {
+					return nil, false
+				}
+				target, ok := assignmentTarget(el.Value)
+				if !ok {
+					return nil, false
+				}
+				pattern.Rest = target
+			default:
+				target, ok := assignmentTarget(element)
+				if !ok {
+					return nil, false
+				}
+				pattern.Elements = append(pattern.Elements, target)
+			}
+		}
+		return pattern, true
+	case *ast.ObjectLiteral:
+		pattern := &ast.ObjectPattern{LeftBrace: lit.LeftBrace, RightBrace: lit.RightBrace}
+		for _, prop := range lit.Value {
+			if prop.Kind != "value" {
+				return nil, false
+			}
+			target, ok := assignmentTarget(prop.Value)
+			if !ok {
+				return nil, false
+			}
+			pattern.Properties = append(pattern.Properties, &ast.PatternProperty{
+				Key:           prop.Key,
+				KeyExpression: prop.KeyExpression,
+				Target:        target,
+			})
+		}
+		return pattern, true
+	}
+	return nil, false
+}
+
+// assignmentTarget validates and, where necessary, converts a single
+// destructuring assignment target. Identifiers and member expressions are
+// valid targets; nested literals become nested patterns; an AssignExpression
+// (target = default) keeps its shape with its left side converted.
+func assignmentTarget(expr ast.Expression) (ast.Expression, bool) {
+	switch e := expr.(type) {
+	case *ast.Identifier, *ast.DotExpression, *ast.BracketExpression:
+		return expr, true
+	case *ast.ArrayPattern, *ast.ObjectPattern:
+		// A nested array or object literal that was already reinterpreted as a
+		// binding pattern (e.g. an element default whose left side parsed as a
+		// destructuring assignment) is a valid target as-is.
+		return expr, true
+	case *ast.ArrayLiteral, *ast.ObjectLiteral:
+		return literalToPattern(expr)
+	case *ast.AssignExpression:
+		if e.Operator != token.ASSIGN {
+			return nil, false
+		}
+		left, ok := assignmentTarget(e.Left)
+		if !ok {
+			return nil, false
+		}
+		e.Left = left
+		return e, true
+	}
+	return nil, false
+}
+
+// parseBindingTarget parses a binding target: a plain identifier or a
+// destructuring pattern.
+func (p *parser) parseBindingTarget() ast.Expression {
+	switch p.token {
+	case token.LEFT_BRACKET:
+		return p.parseArrayBindingPattern()
+	case token.LEFT_BRACE:
+		return p.parseObjectBindingPattern()
+	case token.IDENTIFIER:
+		return p.parseIdentifier()
+	default:
+		idx := p.expect(token.IDENTIFIER)
+		return &ast.BadExpression{From: idx, To: p.idx}
+	}
+}
+
+// parseBindingTargetWithDefault parses a binding target optionally followed by
+// "= default", representing the default as an AssignExpression.
+func (p *parser) parseBindingTargetWithDefault() ast.Expression {
+	target := p.parseBindingTarget()
+	if p.token == token.ASSIGN {
+		p.next()
+		return &ast.AssignExpression{
+			Operator: token.ASSIGN,
+			Left:     target,
+			Right:    p.parseAssignmentExpression(),
+		}
+	}
+	return target
+}
+
+func (p *parser) parseArrayBindingPattern() ast.Expression {
+	opening := p.expect(token.LEFT_BRACKET)
+	pattern := &ast.ArrayPattern{LeftBracket: opening}
+	for p.token != token.RIGHT_BRACKET && p.token != token.EOF {
+		if p.token == token.COMMA {
+			pattern.Elements = append(pattern.Elements, nil) // elision
+			p.next()
+			continue
+		}
+		if p.token == token.ELLIPSIS {
+			p.next()
+			pattern.Rest = p.parseBindingTarget()
+			break
+		}
+		pattern.Elements = append(pattern.Elements, p.parseBindingTargetWithDefault())
+		if p.token != token.RIGHT_BRACKET {
+			p.expect(token.COMMA)
+		}
+	}
+	pattern.RightBracket = p.expect(token.RIGHT_BRACKET)
+	return pattern
+}
+
+func (p *parser) parseObjectBindingPattern() ast.Expression {
+	opening := p.expect(token.LEFT_BRACE)
+	pattern := &ast.ObjectPattern{LeftBrace: opening}
+	for p.token != token.RIGHT_BRACE && p.token != token.EOF {
+		if p.token == token.ELLIPSIS {
+			p.next()
+			pattern.Rest = p.parseBindingTarget()
+			break
+		}
+
+		prop := &ast.PatternProperty{}
+		if p.token == token.LEFT_BRACKET {
+			keyExpr, _ := p.parseComputedPropertyKey()
+			prop.KeyExpression = keyExpr
+			p.expect(token.COLON)
+			prop.Target = p.parseBindingTargetWithDefault()
+		} else {
+			keyIdx := p.idx
+			_, key := p.parseObjectPropertyKey()
+			prop.Key = key
+			if p.token == token.COLON {
+				p.next()
+				prop.Target = p.parseBindingTargetWithDefault()
+			} else {
+				// Shorthand: { a } or { a = default }.
+				var target ast.Expression = &ast.Identifier{Name: key, Idx: keyIdx}
+				if p.token == token.ASSIGN {
+					p.next()
+					target = &ast.AssignExpression{
+						Operator: token.ASSIGN,
+						Left:     target,
+						Right:    p.parseAssignmentExpression(),
+					}
+				}
+				prop.Target = target
+			}
+		}
+		pattern.Properties = append(pattern.Properties, prop)
+		if p.token != token.RIGHT_BRACE {
+			p.expect(token.COMMA)
+		}
+	}
+	pattern.RightBrace = p.expect(token.RIGHT_BRACE)
+	return pattern
 }
 
 func (p *parser) parseVariableDeclarationList(idx file.Idx) []ast.Expression {
@@ -264,11 +719,50 @@ func (p *parser) parseObjectPropertyKey() (string, string) {
 	return literal, value
 }
 
+// isAccessorKey reports whether, having just read a "get" or "set" key, the
+// current token begins an accessor's property name rather than turning "get" /
+// "set" into an ordinary property (get:), shorthand (get, / get}) or a method
+// named get/set (get(). The property name itself may be an identifier, string,
+// number or a keyword such as null, so this is expressed as a negative check.
+func (p *parser) isAccessorKey() bool {
+	switch p.token {
+	case token.COLON, token.COMMA, token.RIGHT_BRACE, token.LEFT_PARENTHESIS:
+		return false
+	default:
+		return true
+	}
+}
+
 func (p *parser) parseObjectProperty() ast.Property {
+	// Computed property key: [expr]: value, or [expr]() { ... }.
+	if p.token == token.LEFT_BRACKET {
+		keyExpr, keyIdx := p.parseComputedPropertyKey()
+		if p.token == token.LEFT_PARENTHESIS {
+			return p.parseMethodDefinition(keyIdx, "", keyExpr)
+		}
+		if p.mode&StoreComments != 0 {
+			p.comments.MarkComments(ast.COLON)
+		}
+		p.expect(token.COLON)
+		return ast.Property{
+			KeyExpression: keyExpr,
+			Kind:          "value",
+			Value:         p.parseAssignmentExpression(),
+		}
+	}
+
+	keyIdx := p.idx
 	literal, value := p.parseObjectPropertyKey()
-	if literal == "get" && p.token != token.COLON {
+
+	// Getter / setter: get foo() { ... } or set foo(v) { ... }.
+	if (literal == "get" || literal == "set") && p.isAccessorKey() {
 		idx := p.idx
-		_, value = p.parseObjectPropertyKey()
+		var keyExpr ast.Expression
+		if p.token == token.LEFT_BRACKET {
+			keyExpr, _ = p.parseComputedPropertyKey()
+		} else {
+			_, value = p.parseObjectPropertyKey()
+		}
 		parameterList := p.parseFunctionParameterList()
 
 		node := &ast.FunctionLiteral{
@@ -277,24 +771,40 @@ func (p *parser) parseObjectProperty() ast.Property {
 		}
 		p.parseFunctionBlock(node)
 		return ast.Property{
-			Key:   value,
-			Kind:  "get",
-			Value: node,
+			Key:           value,
+			KeyExpression: keyExpr,
+			Kind:          literal,
+			Value:         node,
 		}
-	} else if literal == "set" && p.token != token.COLON {
-		idx := p.idx
-		_, value = p.parseObjectPropertyKey()
-		parameterList := p.parseFunctionParameterList()
+	}
 
-		node := &ast.FunctionLiteral{
-			Function:      idx,
-			ParameterList: parameterList,
-		}
-		p.parseFunctionBlock(node)
+	// Method shorthand: foo() { ... }.
+	if p.token == token.LEFT_PARENTHESIS {
+		return p.parseMethodDefinition(keyIdx, value, nil)
+	}
+
+	// Property shorthand: { foo } is sugar for { foo: foo }.
+	if p.token == token.COMMA || p.token == token.RIGHT_BRACE {
 		return ast.Property{
 			Key:   value,
-			Kind:  "set",
-			Value: node,
+			Kind:  "value",
+			Value: &ast.Identifier{Name: value, Idx: keyIdx},
+		}
+	}
+
+	// CoverInitializedName: { foo = default }. Only valid when the object
+	// literal is later reinterpreted as a destructuring pattern; retained here
+	// so the arrow-function cover grammar can parse ({ a = 1 }) => ...
+	if p.token == token.ASSIGN {
+		p.next()
+		return ast.Property{
+			Key:  value,
+			Kind: "value",
+			Value: &ast.AssignExpression{
+				Operator: token.ASSIGN,
+				Left:     &ast.Identifier{Name: value, Idx: keyIdx},
+				Right:    p.parseAssignmentExpression(),
+			},
 		}
 	}
 
@@ -313,6 +823,32 @@ func (p *parser) parseObjectProperty() ast.Property {
 		p.comments.SetExpression(exp.Value)
 	}
 	return exp
+}
+
+// parseComputedPropertyKey parses a [expr] computed key, returning the
+// expression and the index of the opening bracket.
+func (p *parser) parseComputedPropertyKey() (ast.Expression, file.Idx) {
+	idx := p.expect(token.LEFT_BRACKET)
+	keyExpr := p.parseAssignmentExpression()
+	p.expect(token.RIGHT_BRACKET)
+	return keyExpr, idx
+}
+
+// parseMethodDefinition parses the "(params) { body }" of an object method
+// shorthand, returning a "value" property whose value is a function literal.
+func (p *parser) parseMethodDefinition(idx file.Idx, key string, keyExpr ast.Expression) ast.Property {
+	parameterList := p.parseFunctionParameterList()
+	node := &ast.FunctionLiteral{
+		Function:      idx,
+		ParameterList: parameterList,
+	}
+	p.parseFunctionBlock(node)
+	return ast.Property{
+		Key:           key,
+		KeyExpression: keyExpr,
+		Kind:          "value",
+		Value:         node,
+	}
 }
 
 func (p *parser) parseObjectLiteral() ast.Expression {
@@ -357,7 +893,12 @@ func (p *parser) parseArrayLiteral() ast.Expression {
 			continue
 		}
 
-		exp := p.parseAssignmentExpression()
+		var exp ast.Expression
+		if p.token == token.ELLIPSIS {
+			exp = p.parseSpreadElement()
+		} else {
+			exp = p.parseAssignmentExpression()
+		}
 
 		value = append(value, exp)
 		if p.token != token.RIGHT_BRACKET {
@@ -379,13 +920,27 @@ func (p *parser) parseArrayLiteral() ast.Expression {
 	}
 }
 
+// parseSpreadElement parses a ...expr spread element.
+func (p *parser) parseSpreadElement() ast.Expression {
+	idx := p.expect(token.ELLIPSIS)
+	return &ast.SpreadExpression{
+		Idx:   idx,
+		Value: p.parseAssignmentExpression(),
+	}
+}
+
 func (p *parser) parseArgumentList() (argumentList []ast.Expression, idx0, idx1 file.Idx) { //nolint:nonamedreturns
 	if p.mode&StoreComments != 0 {
 		p.comments.Unset()
 	}
 	idx0 = p.expect(token.LEFT_PARENTHESIS)
 	for p.token != token.RIGHT_PARENTHESIS {
-		exp := p.parseAssignmentExpression()
+		var exp ast.Expression
+		if p.token == token.ELLIPSIS {
+			exp = p.parseSpreadElement()
+		} else {
+			exp = p.parseAssignmentExpression()
+		}
 		if p.mode&StoreComments != 0 {
 			p.comments.SetExpression(exp)
 		}
@@ -498,9 +1053,26 @@ func (p *parser) parseLeftHandSideExpression() ast.Expression {
 			left = p.parseDotMember(left)
 		case token.LEFT_BRACKET:
 			left = p.parseBracketMember(left)
+		case token.TEMPLATE:
+			left = p.parseTaggedTemplate(left)
 		default:
 			return left
 		}
+	}
+}
+
+// parseTaggedTemplate wraps a tag expression and the template literal that
+// immediately follows it.
+func (p *parser) parseTaggedTemplate(tag ast.Expression) ast.Expression {
+	idx := p.idx
+	literal := p.literal
+	template, ok := p.parseTemplateLiteral(idx, literal).(*ast.TemplateLiteral)
+	if !ok {
+		return &ast.BadExpression{From: tag.Idx0(), To: p.idx}
+	}
+	return &ast.TaggedTemplateExpression{
+		Tag:      tag,
+		Template: template,
 	}
 }
 
@@ -543,6 +1115,8 @@ func (p *parser) parseLeftHandSideExpressionAllowCall() ast.Expression {
 			left = p.parseBracketMember(left)
 		case token.LEFT_PARENTHESIS:
 			left = p.parseCallExpression(left)
+		case token.TEMPLATE:
+			left = p.parseTaggedTemplate(left)
 		default:
 			return left
 		}
@@ -948,6 +1522,20 @@ func (p *parser) parseAssignmentExpression() ast.Expression {
 		p.next()
 		switch left.(type) {
 		case *ast.Identifier, *ast.DotExpression, *ast.BracketExpression:
+		case *ast.ArrayLiteral, *ast.ObjectLiteral:
+			// Destructuring assignment: reinterpret the literal as a pattern.
+			if operator != token.ASSIGN {
+				p.error(left.Idx0(), "invalid left-hand side in assignment")
+				p.nextStatement()
+				return &ast.BadExpression{From: idx, To: p.idx}
+			}
+			if pattern, ok := literalToPattern(left); ok {
+				left = pattern
+			} else {
+				p.error(left.Idx0(), "invalid destructuring assignment target")
+				p.nextStatement()
+				return &ast.BadExpression{From: idx, To: p.idx}
+			}
 		default:
 			p.error(left.Idx0(), "invalid left-hand side in assignment")
 			p.nextStatement()

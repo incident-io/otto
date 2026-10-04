@@ -38,6 +38,16 @@ types:
         function: 1
       - name: getOwnPropertyNames
         function: 1
+      - name: entries
+        function: 1
+      - name: is
+        function: 2
+      - name: fromEntries
+        function: 1
+      - name: setPrototypeOf
+        function: 2
+      - name: getOwnPropertyDescriptors
+        function: 1
     prototype:
       value: prototypeValueObject
       properties:
@@ -90,6 +100,10 @@ types:
         value: rt.global.ArrayPrototype
       - name: isArray
         function: 1
+      - name: from
+        function: 1
+      - name: of
+        function: -1
     prototype:
       prototype: Object
       objectClass: Array
@@ -139,6 +153,26 @@ types:
           function: 1
         - name: reduceRight
           function: 1
+        - name: find
+          function: 1
+        - name: findIndex
+          function: 1
+        - name: findLast
+          function: 1
+        - name: findLastIndex
+          function: 1
+        - name: includes
+          function: 1
+        - name: fill
+          function: 1
+        - name: copyWithin
+          function: 2
+        - name: flat
+          function: -1
+        - name: flatMap
+          function: 1
+        - name: at
+          function: 1
         - name: toLocaleString
           function: -1
         - name: toString
@@ -151,6 +185,8 @@ types:
       - name: prototype
         value: rt.global.StringPrototype
       - name: fromCharCode
+        function: 1
+      - name: raw
         function: 1
     prototype:
       objectClass: String
@@ -190,6 +226,20 @@ types:
           function: 2
         - name: startsWith
           function: 1
+        - name: includes
+          function: 1
+        - name: endsWith
+          function: 1
+        - name: repeat
+          function: 1
+        - name: padStart
+          function: 1
+        - name: padEnd
+          function: 1
+        - name: at
+          function: 1
+        - name: replaceAll
+          function: 2
         - name: toString
           function: -1
         - name: trim
@@ -240,6 +290,18 @@ types:
         value: rt.global.NumberPrototype
       - name: isNaN
         function: 1
+      - name: isInteger
+        function: 1
+      - name: isFinite
+        function: 1
+      - name: isSafeInteger
+        function: 1
+      - name: parseInt
+        function: 2
+        call: GlobalParseInt
+      - name: parseFloat
+        function: 1
+        call: GlobalParseFloat
       - name: MAX_VALUE
         value: math.MaxFloat64
         kind: valueNumber
@@ -337,6 +399,14 @@ types:
       - name: tanh
         function: 1
       - name: trunc
+        function: 1
+      - name: sign
+        function: 1
+      - name: hypot
+        function: 2
+      - name: clz32
+        function: 1
+      - name: fround
         function: 1
       - name: E
         kind: valueNumber

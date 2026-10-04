@@ -1,6 +1,8 @@
 package otto
 
 import (
+	"bytes"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,6 +41,31 @@ func builtinStringFromCharCode(call FunctionCall) Value {
 		chrList[index] = toUint16(value)
 	}
 	return string16Value(chrList)
+}
+
+func builtinStringRaw(call FunctionCall) Value {
+	template := call.Argument(0)
+	if !template.IsObject() {
+		return stringValue("")
+	}
+	raw := template.object().get("raw")
+	if !raw.IsObject() {
+		return stringValue("")
+	}
+	rawObject := raw.object()
+	length := int64(toUint32(rawObject.get(propertyLength)))
+
+	var b strings.Builder
+	for i := range length {
+		call.runtime.checkInterrupt()
+		b.WriteString(rawObject.get(arrayIndexToString(i)).string())
+		// Interleave the substitution that follows each segment but the last.
+		if i+1 < length && int(i)+1 < len(call.ArgumentList) {
+			b.WriteString(call.ArgumentList[i+1].string())
+		}
+		call.runtime.checkStringLength(b.Len())
+	}
+	return stringValue(b.String())
 }
 
 func builtinStringCharAt(call FunctionCall) Value {
@@ -467,6 +494,208 @@ func builtinStringStartsWith(call FunctionCall) Value {
 		return boolValue(false)
 	}
 	return boolValue(target[:length] == search)
+}
+
+// isRegExpArgument reports whether the value is a RegExp object. Used by
+// includes/endsWith/replaceAll to reject regular expressions per spec.
+func isRegExpArgument(value Value) bool {
+	return value.IsObject() && value.object().class == classRegExpName
+}
+
+func builtinStringIncludes(call FunctionCall) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	searchValue := call.Argument(0)
+	if isRegExpArgument(searchValue) {
+		panic(call.runtime.panicTypeError("First argument to String.prototype.includes must not be a regular expression"))
+	}
+	target := call.This.string()
+	search := searchValue.string()
+	start := 0
+	if len(call.ArgumentList) > 1 && !call.ArgumentList[1].IsUndefined() {
+		start = int(toIntegerFloat(call.Argument(1)))
+		if start < 0 {
+			start = 0
+		}
+		if start > len(target) {
+			start = len(target)
+		}
+	}
+	return boolValue(strings.Contains(target[start:], search))
+}
+
+func builtinStringEndsWith(call FunctionCall) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	searchValue := call.Argument(0)
+	if isRegExpArgument(searchValue) {
+		panic(call.runtime.panicTypeError("First argument to String.prototype.endsWith must not be a regular expression"))
+	}
+	target := call.This.string()
+	search := searchValue.string()
+	end := len(target)
+	if len(call.ArgumentList) > 1 && !call.ArgumentList[1].IsUndefined() {
+		end = int(toIntegerFloat(call.Argument(1)))
+		if end < 0 {
+			end = 0
+		}
+		if end > len(target) {
+			end = len(target)
+		}
+	}
+	return boolValue(strings.HasSuffix(target[:end], search))
+}
+
+func builtinStringRepeat(call FunctionCall) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	target := call.This.string()
+	count := toIntegerFloat(call.Argument(0))
+	if count < 0 || math.IsInf(count, 1) {
+		panic(call.runtime.panicRangeError("Invalid count value"))
+	}
+	if target == "" || count == 0 {
+		return stringValue("")
+	}
+	call.runtime.checkStringLengthFloat(float64(len(target)) * count)
+	return stringValue(strings.Repeat(target, int(count)))
+}
+
+// stringPad implements the shared logic for padStart and padEnd. When atStart
+// is true the fill is prepended, otherwise appended.
+func stringPad(call FunctionCall, atStart bool) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	target := call.This.string()
+	maxLengthFloat := toIntegerFloat(call.Argument(0))
+	targetRunes := []rune(target)
+	if maxLengthFloat <= float64(len(targetRunes)) {
+		return stringValue(target)
+	}
+
+	fill := " "
+	if len(call.ArgumentList) > 1 && !call.ArgumentList[1].IsUndefined() {
+		fill = call.Argument(1).string()
+	}
+	if fill == "" {
+		return stringValue(target)
+	}
+
+	// Every rune is at least one byte, so maxLength runes is a lower bound
+	// on the result's size in bytes.
+	call.runtime.checkStringLengthFloat(maxLengthFloat)
+	fillRunes := []rune(fill)
+	padLen := int(maxLengthFloat) - len(targetRunes)
+	padding := make([]rune, 0, preallocation(int64(padLen)))
+	for len(padding) < padLen {
+		call.runtime.checkInterrupt()
+		padding = append(padding, fillRunes...)
+	}
+	pad := string(padding[:padLen])
+	call.runtime.checkStringLength(len(target) + len(pad))
+
+	if atStart {
+		return stringValue(pad + target)
+	}
+	return stringValue(target + pad)
+}
+
+func builtinStringPadStart(call FunctionCall) Value {
+	return stringPad(call, true)
+}
+
+func builtinStringPadEnd(call FunctionCall) Value {
+	return stringPad(call, false)
+}
+
+func builtinStringAt(call FunctionCall) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	str := call.This.object().stringValue()
+	length := str.Length()
+	idx := int(toIntegerFloat(call.Argument(0)))
+	if idx < 0 {
+		idx += length
+	}
+	if idx < 0 || idx >= length {
+		return Value{}
+	}
+	chr := stringAt(str, idx)
+	if chr == utf8.RuneError {
+		return Value{}
+	}
+	return stringValue(string(chr))
+}
+
+func builtinStringReplaceAll(call FunctionCall) Value {
+	checkObjectCoercible(call.runtime, call.This)
+	searchValue := call.Argument(0)
+	if isRegExpArgument(searchValue) {
+		regExp := searchValue.object().regExpValue()
+		if !regExp.global {
+			panic(call.runtime.panicTypeError("replaceAll must be called with a global RegExp"))
+		}
+		// A global RegExp behaves the same as replace, which already replaces
+		// every non-overlapping match.
+		return builtinStringReplace(call)
+	}
+
+	target := []byte(call.This.string())
+	search := []byte(searchValue.string())
+	replaceValue := call.Argument(1)
+
+	// Find all non-overlapping occurrences of the (literal) search string.
+	var found [][]int
+	from := 0
+	for {
+		idx := bytes.Index(target[from:], search)
+		if idx < 0 {
+			break
+		}
+		start := from + idx
+		end := start + len(search)
+		found = append(found, []int{start, end})
+		if len(search) == 0 {
+			from = end + 1
+			if from > len(target) {
+				break
+			}
+		} else {
+			from = end
+		}
+	}
+
+	if found == nil {
+		return stringValue(string(target))
+	}
+
+	lastIndex := 0
+	result := []byte{}
+	if replaceValue.isCallable() {
+		targetStr := string(target)
+		replace := replaceValue.object()
+		for _, match := range found {
+			if match[0] != lastIndex {
+				result = append(result, targetStr[lastIndex:match[0]]...)
+			}
+			matched := targetStr[match[0]:match[1]]
+			startIndex := utf8.RuneCountInString(targetStr[0:match[0]])
+			argumentList := []Value{stringValue(matched), intValue(startIndex), stringValue(targetStr)}
+			replacement := replace.call(Value{}, argumentList, false, nativeFrame).string()
+			call.runtime.checkStringLength(len(result) + len(replacement))
+			result = append(result, []byte(replacement)...)
+			lastIndex = match[1]
+		}
+	} else {
+		replace := []byte(replaceValue.string())
+		for _, match := range found {
+			call.runtime.checkInterrupt()
+			result = builtinStringFindAndReplaceString(result, lastIndex, []int{match[0], match[1]}, target, replace)
+			call.runtime.checkStringLength(len(result))
+			lastIndex = match[1]
+		}
+	}
+
+	if lastIndex != len(target) {
+		result = append(result, target[lastIndex:]...)
+	}
+
+	return stringValue(string(result))
 }
 
 func builtinStringToLowerCase(call FunctionCall) Value {

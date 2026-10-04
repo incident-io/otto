@@ -25,7 +25,9 @@ jobs:
       - name: Validate go mod / generate
         run: |
           go mod tidy
-          go install golang.org/x/tools/cmd/stringer@latest
+          # Pin stringer: @latest pulls an x/tools that requires a newer Go,
+          # forcing a toolchain switch and reformatting the generated files.
+          go install golang.org/x/tools/cmd/stringer@v0.29.0
           go generate ./...
           git --no-pager diff && [[ 0 -eq $(git status --porcelain | wc -l) ]]
 

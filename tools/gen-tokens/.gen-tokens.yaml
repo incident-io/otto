@@ -11,6 +11,7 @@ tokens:
   - name: "NULL"
   - name: NUMBER
   - name: IDENTIFIER
+  - name: TEMPLATE
 
   - group: Maths
   - name: PLUS
@@ -117,6 +118,8 @@ tokens:
     symbol: ","
   - name: PERIOD
     symbol: "."
+  - name: ELLIPSIS
+    symbol: "..."
 
   - group: Right operators
   - name: RIGHT_PARENTHESIS
@@ -131,6 +134,8 @@ tokens:
     symbol: ":"
   - name: QUESTION_MARK
     symbol: "?"
+  - name: ARROW
+    symbol: "=>"
 
   - group: Basic flow - keywords below here
   - name: _
@@ -140,6 +145,8 @@ tokens:
 
   - group: Declarations
   - name: VAR
+  - name: LET
+  - name: CONST
   - name: FOR
   - name: NEW
   - name: TRY
@@ -175,20 +182,17 @@ tokens:
   - group: Instance of
   - name: INSTANCEOF
 
+  - group: Classes
+  - name: CLASS
+  - name: EXTENDS
+  - name: SUPER
+
   # Future
-  - name: const
-    future: true
-  - name: class
-    future: true
   - name: enum
     future: true
   - name: export
     future: true
-  - name: extends
-    future: true
   - name: import
-    future: true
-  - name: super
     future: true
 
   # Future Strict items
@@ -196,9 +200,6 @@ tokens:
     future: true
     strict: true
   - name: interface
-    future: true
-    strict: true
-  - name: let
     future: true
     strict: true
   - name: package

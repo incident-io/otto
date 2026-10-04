@@ -16,6 +16,7 @@ const (
 	NULL
 	NUMBER
 	IDENTIFIER
+	TEMPLATE
 	// Maths.
 	PLUS      // +
 	MINUS     // -
@@ -69,6 +70,7 @@ const (
 	LEFT_BRACE       // {
 	COMMA            // ,
 	PERIOD           // .
+	ELLIPSIS         // ...
 	// Right operators.
 	RIGHT_PARENTHESIS // )
 	RIGHT_BRACKET     // ]
@@ -76,6 +78,7 @@ const (
 	SEMICOLON         // ;
 	COLON             // :
 	QUESTION_MARK     // ?
+	ARROW             // =>
 	// Basic flow - keywords below here.
 	_
 	IF
@@ -83,6 +86,8 @@ const (
 	DO
 	// Declarations.
 	VAR
+	LET
+	CONST
 	FOR
 	NEW
 	TRY
@@ -111,6 +116,10 @@ const (
 	DEBUGGER
 	// Instance of.
 	INSTANCEOF
+	// Classes.
+	CLASS
+	EXTENDS
+	SUPER
 )
 
 var token2string = [...]string{
@@ -123,6 +132,7 @@ var token2string = [...]string{
 	NULL:                        "NULL",
 	NUMBER:                      "NUMBER",
 	IDENTIFIER:                  "IDENTIFIER",
+	TEMPLATE:                    "TEMPLATE",
 	PLUS:                        "+",
 	MINUS:                       "-",
 	MULTIPLY:                    "*",
@@ -167,16 +177,20 @@ var token2string = [...]string{
 	LEFT_BRACE:                  "{",
 	COMMA:                       ",",
 	PERIOD:                      ".",
+	ELLIPSIS:                    "...",
 	RIGHT_PARENTHESIS:           ")",
 	RIGHT_BRACKET:               "]",
 	RIGHT_BRACE:                 "}",
 	SEMICOLON:                   ";",
 	COLON:                       ":",
 	QUESTION_MARK:               "?",
+	ARROW:                       "=>",
 	IF:                          "if",
 	IN:                          "in",
 	DO:                          "do",
 	VAR:                         "var",
+	LET:                         "let",
+	CONST:                       "const",
 	FOR:                         "for",
 	NEW:                         "new",
 	TRY:                         "try",
@@ -199,6 +213,9 @@ var token2string = [...]string{
 	CONTINUE:                    "continue",
 	DEBUGGER:                    "debugger",
 	INSTANCEOF:                  "instanceof",
+	CLASS:                       "class",
+	EXTENDS:                     "extends",
+	SUPER:                       "super",
 }
 
 var keywordTable = map[string]keyword{
@@ -213,6 +230,12 @@ var keywordTable = map[string]keyword{
 	},
 	"var": {
 		token: VAR,
+	},
+	"let": {
+		token: LET,
+	},
+	"const": {
+		token: CONST,
 	},
 	"for": {
 		token: FOR,
@@ -280,13 +303,14 @@ var keywordTable = map[string]keyword{
 	"instanceof": {
 		token: INSTANCEOF,
 	},
-	"const": {
-		token:         KEYWORD,
-		futureKeyword: true,
-	},
 	"class": {
-		token:         KEYWORD,
-		futureKeyword: true,
+		token: CLASS,
+	},
+	"extends": {
+		token: EXTENDS,
+	},
+	"super": {
+		token: SUPER,
 	},
 	"enum": {
 		token:         KEYWORD,
@@ -296,15 +320,7 @@ var keywordTable = map[string]keyword{
 		token:         KEYWORD,
 		futureKeyword: true,
 	},
-	"extends": {
-		token:         KEYWORD,
-		futureKeyword: true,
-	},
 	"import": {
-		token:         KEYWORD,
-		futureKeyword: true,
-	},
-	"super": {
 		token:         KEYWORD,
 		futureKeyword: true,
 	},
@@ -314,11 +330,6 @@ var keywordTable = map[string]keyword{
 		strict:        true,
 	},
 	"interface": {
-		token:         KEYWORD,
-		futureKeyword: true,
-		strict:        true,
-	},
-	"let": {
 		token:         KEYWORD,
 		futureKeyword: true,
 		strict:        true,

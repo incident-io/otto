@@ -12,6 +12,10 @@ func (rt *runtime) cmplEvaluateNodeProgram(node *nodeProgram, eval bool) Value {
 	rt.cmplFunctionDeclaration(node.functionList)
 	rt.cmplVariableDeclaration(node.varList)
 	rt.scope.frame.file = node.file
+	if node.lexical {
+		restore := rt.enterLexicalScope()
+		defer restore()
+	}
 	return rt.cmplEvaluateNodeStatementList(node.body)
 }
 
@@ -33,11 +37,31 @@ func (rt *runtime) cmplCallNodeFunction(function *object, stash *fnStash, node *
 			value = argumentList[index]
 			indexOfParameterName[index] = name
 		}
+		// Apply a default value when the argument is missing or undefined.
+		// Defaults are evaluated left-to-right and may reference earlier
+		// parameters, which have already been bound in this scope.
+		if value.IsUndefined() && index < len(node.parameterDefaults) && node.parameterDefaults[index] != nil {
+			value = rt.cmplEvaluateNodeExpression(node.parameterDefaults[index]).resolve()
+		}
+		// A destructuring parameter binds the argument against its pattern.
+		if index < len(node.parameterTargets) && node.parameterTargets[index] != nil {
+			rt.bindPattern(node.parameterTargets[index], value, bindLet)
+			continue
+		}
 		// strict = false
 		rt.scope.lexical.setValue(name, value, false)
 	}
 
-	if !argumentsFound {
+	// Collect any remaining arguments into the rest parameter array.
+	if node.restParameter != "" {
+		rest := []Value{}
+		if len(argumentList) > len(node.parameterList) {
+			rest = append(rest, argumentList[len(node.parameterList):]...)
+		}
+		rt.scope.lexical.setValue(node.restParameter, objectValue(rt.newArrayOf(rest)), false)
+	}
+
+	if !node.isArrow && !argumentsFound {
 		arguments := rt.newArgumentsObject(indexOfParameterName, stash, len(argumentList))
 		arguments.defineProperty("callee", objectValue(function), 0o101, false)
 		stash.arguments = arguments

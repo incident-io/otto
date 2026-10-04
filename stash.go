@@ -117,6 +117,7 @@ type dclProperty struct {
 	mutable   bool
 	deletable bool
 	readable  bool
+	constant  bool // a const binding: assignment always throws a TypeError
 }
 
 func (rt *runtime) newDeclarationStash(outer stasher) *dclStash {
@@ -165,10 +166,25 @@ func (s *dclStash) createBinding(name string, deletable bool, value Value) {
 	}
 }
 
+// createImmutableBinding creates and initialises a const binding. Any later
+// assignment to it throws a TypeError.
+func (s *dclStash) createImmutableBinding(name string, value Value) {
+	s.property[name] = dclProperty{
+		value:     value,
+		mutable:   false,
+		deletable: false,
+		readable:  true,
+		constant:  true,
+	}
+}
+
 func (s *dclStash) setBinding(name string, value Value, strict bool) {
 	prop, exists := s.property[name]
 	if !exists {
 		panic(fmt.Errorf("setBinding: %s: missing", name))
+	}
+	if prop.constant {
+		panic(s.rt.panicTypeError("Assignment to constant variable."))
 	}
 	if prop.mutable {
 		prop.value = value

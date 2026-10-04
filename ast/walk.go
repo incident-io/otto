@@ -151,6 +151,9 @@ func Walk(v Visitor, n Node) {
 	case *ObjectLiteral:
 		if n != nil {
 			for _, p := range n.Value {
+				if p.KeyExpression != nil {
+					Walk(v, p.KeyExpression)
+				}
 				Walk(v, p.Value)
 			}
 		}
@@ -172,6 +175,34 @@ func Walk(v Visitor, n Node) {
 			}
 		}
 	case *StringLiteral:
+	case *SuperExpression:
+	case *ClassLiteral:
+		if n != nil {
+			if n.SuperClass != nil {
+				Walk(v, n.SuperClass)
+			}
+			for _, element := range n.Body {
+				if element.KeyExpression != nil {
+					Walk(v, element.KeyExpression)
+				}
+				Walk(v, element.Method)
+			}
+		}
+	case *SpreadExpression:
+		if n != nil {
+			Walk(v, n.Value)
+		}
+	case *TemplateLiteral:
+		if n != nil {
+			for _, e := range n.Expressions {
+				Walk(v, e)
+			}
+		}
+	case *TaggedTemplateExpression:
+		if n != nil {
+			Walk(v, n.Tag)
+			Walk(v, n.Template)
+		}
 	case *SwitchStatement:
 		if n != nil {
 			Walk(v, n.Discriminant)
@@ -198,7 +229,36 @@ func Walk(v Visitor, n Node) {
 		if n != nil {
 			Walk(v, n.Initializer)
 		}
+	case *ArrayPattern:
+		if n != nil {
+			for _, e := range n.Elements {
+				if e != nil {
+					Walk(v, e)
+				}
+			}
+			if n.Rest != nil {
+				Walk(v, n.Rest)
+			}
+		}
+	case *ObjectPattern:
+		if n != nil {
+			for _, prop := range n.Properties {
+				if prop.KeyExpression != nil {
+					Walk(v, prop.KeyExpression)
+				}
+				Walk(v, prop.Target)
+			}
+			if n.Rest != nil {
+				Walk(v, n.Rest)
+			}
+		}
 	case *VariableStatement:
+		if n != nil {
+			for _, e := range n.List {
+				Walk(v, e)
+			}
+		}
+	case *LexicalDeclaration:
 		if n != nil {
 			for _, e := range n.List {
 				Walk(v, e)

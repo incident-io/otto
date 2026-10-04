@@ -98,6 +98,46 @@ func builtinNumberIsNaN(call FunctionCall) Value {
 	return boolValue(call.Argument(0).IsNaN())
 }
 
+func builtinNumberIsInteger(call FunctionCall) Value {
+	// No coercion: non-Number arguments are always false.
+	value := call.Argument(0)
+	if value.kind != valueNumber {
+		return boolValue(false)
+	}
+	num := value.float64()
+	if math.IsNaN(num) || math.IsInf(num, 0) {
+		return boolValue(false)
+	}
+	return boolValue(math.Trunc(num) == num)
+}
+
+func builtinNumberIsFinite(call FunctionCall) Value {
+	// No coercion (unlike the global isFinite): non-Number arguments are false.
+	value := call.Argument(0)
+	if value.kind != valueNumber {
+		return boolValue(false)
+	}
+	num := value.float64()
+	return boolValue(!math.IsNaN(num) && !math.IsInf(num, 0))
+}
+
+func builtinNumberIsSafeInteger(call FunctionCall) Value {
+	// isInteger AND abs(value) <= 2^53 - 1. No coercion.
+	value := call.Argument(0)
+	if value.kind != valueNumber {
+		return boolValue(false)
+	}
+	num := value.float64()
+	if math.IsNaN(num) || math.IsInf(num, 0) {
+		return boolValue(false)
+	}
+	if math.Trunc(num) != num {
+		return boolValue(false)
+	}
+	const maxSafeInteger = float64(1<<53 - 1)
+	return boolValue(math.Abs(num) <= maxSafeInteger)
+}
+
 func builtinNumberToLocaleString(call FunctionCall) Value {
 	value := call.thisClassObject(classNumberName).primitiveValue()
 	locale := call.Argument(0)

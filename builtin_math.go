@@ -2,6 +2,7 @@ package otto
 
 import (
 	"math"
+	"math/bits"
 	"math/rand"
 )
 
@@ -208,4 +209,68 @@ func builtinMathTanh(call FunctionCall) Value {
 func builtinMathTrunc(call FunctionCall) Value {
 	number := call.Argument(0).float64()
 	return float64Value(math.Trunc(number))
+}
+
+func builtinMathSign(call FunctionCall) Value {
+	number := call.Argument(0).float64()
+	if math.IsNaN(number) || number == 0 {
+		// Preserves NaN, +0 and -0.
+		return float64Value(number)
+	}
+	if math.Signbit(number) {
+		return float64Value(-1)
+	}
+	return float64Value(1)
+}
+
+func builtinMathHypot(call FunctionCall) Value {
+	hasInf := false
+	hasNaN := false
+	maxAbs := 0.0
+	values := make([]float64, len(call.ArgumentList))
+	for i, arg := range call.ArgumentList {
+		number := arg.float64()
+		values[i] = number
+		switch {
+		case math.IsInf(number, 0):
+			hasInf = true
+		case math.IsNaN(number):
+			hasNaN = true
+		default:
+			if abs := math.Abs(number); abs > maxAbs {
+				maxAbs = abs
+			}
+		}
+	}
+	// Per spec, the Infinity check takes precedence over NaN.
+	if hasInf {
+		return float64Value(math.Inf(1))
+	}
+	if hasNaN {
+		return NaNValue()
+	}
+	if maxAbs == 0 {
+		return float64Value(0)
+	}
+	// Scale by the largest magnitude to guard against overflow/underflow.
+	var sum float64
+	for _, number := range values {
+		scaled := number / maxAbs
+		sum += scaled * scaled
+	}
+	return float64Value(maxAbs * math.Sqrt(sum))
+}
+
+func builtinMathClz32(call FunctionCall) Value {
+	number := toUint32(call.Argument(0))
+	return toValue(uint32(bits.LeadingZeros32(number)))
+}
+
+func builtinMathFround(call FunctionCall) Value {
+	number := call.Argument(0).float64()
+	if math.IsNaN(number) || math.IsInf(number, 0) || number == 0 {
+		// Preserves NaN, ±Infinity, +0 and -0.
+		return float64Value(number)
+	}
+	return float64Value(float64(float32(number)))
 }

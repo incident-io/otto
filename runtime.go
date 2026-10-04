@@ -75,6 +75,16 @@ func (rt *runtime) checkStringLength(length int) {
 	}
 }
 
+// checkStringLengthFloat is checkStringLength for a length computed from
+// JavaScript numbers, which may not fit in an int. Lengths beyond 2^31-1
+// bytes are always rejected.
+func (rt *runtime) checkStringLengthFloat(length float64) {
+	if length > math.MaxInt32 {
+		panic(rt.panicRangeError("Invalid string length"))
+	}
+	rt.checkStringLength(int(length))
+}
+
 func (rt *runtime) enterScope(scop *scope) {
 	scop.outer = rt.scope
 	if rt.scope != nil {
