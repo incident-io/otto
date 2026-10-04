@@ -6,8 +6,8 @@
 package ast
 
 import (
-	"github.com/incident-io/otto/file"
-	"github.com/incident-io/otto/token"
+	"github.com/robertkrimen/otto/file"
+	"github.com/robertkrimen/otto/token"
 )
 
 // Node is implemented by types that represent a node.

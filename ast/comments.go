@@ -3,7 +3,7 @@ package ast
 import (
 	"fmt"
 
-	"github.com/incident-io/otto/file"
+	"github.com/robertkrimen/otto/file"
 )
 
 // CommentPosition determines where the comment is in a given context.
