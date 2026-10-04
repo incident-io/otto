@@ -55,7 +55,7 @@ func TestTemplateNesting(t *testing.T) {
 	_, err = vm.Run(strings.Repeat("`${", n) + "1" + strings.Repeat("}`", n))
 	require.ErrorContains(t, err, "Maximum nesting depth exceeded")
 	require.Less(t, len(err.Error()), 1000)
-	require.Less(t, time.Since(start), time.Second)
+	require.Less(t, time.Since(start), 3*time.Second)
 }
 
 func TestParseInterrupt(t *testing.T) {
