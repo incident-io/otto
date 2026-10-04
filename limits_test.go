@@ -50,9 +50,16 @@ func TestTemplateNesting(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "abc1", v.String())
 
+	nest := func(n int) string { return strings.Repeat("`${", n) + "1" + strings.Repeat("}`", n) }
+	v, err = vm.Run(nest(32))
+	require.NoError(t, err)
+	require.Equal(t, "1", v.String())
+	_, err = vm.Run(nest(33))
+	require.ErrorContains(t, err, "Maximum nesting depth exceeded")
+
 	start := time.Now()
 	n := 100000
-	_, err = vm.Run(strings.Repeat("`${", n) + "1" + strings.Repeat("}`", n))
+	_, err = vm.Run(nest(n))
 	require.ErrorContains(t, err, "Maximum nesting depth exceeded")
 	require.Less(t, len(err.Error()), 1000)
 	require.Less(t, time.Since(start), 3*time.Second)
