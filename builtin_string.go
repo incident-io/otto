@@ -3,13 +3,12 @@ package otto
 import (
 	"bytes"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
-
-	"github.com/robertkrimen/otto/internal/regexp"
 )
 
 // String
@@ -193,7 +192,7 @@ func builtinStringMatch(call FunctionCall) Value {
 		return objectValue(execResultToArray(call.runtime, target, result))
 	}
 
-	result := call.runtime.hookRegExp(matcher.regExpValue().regularExpression).FindAllStringIndex(target, -1)
+	result := call.runtime.regExpFindAll(matcher.regExpValue().program, target, -1)
 	if result == nil {
 		matcher.put("lastIndex", intValue(0), true)
 		return Value{} // !match
@@ -253,21 +252,22 @@ func builtinStringReplace(call FunctionCall) Value {
 	searchObject := searchValue.object()
 
 	// TODO If a capture is -1?
-	var search *regexp.Regexp
+	var search *regExpProgram
 	global := false
 	find := 1
 	if searchValue.IsObject() && searchObject.class == classRegExpName {
 		regExp := searchObject.regExpValue()
-		search = regExp.regularExpression
+		search = regExp.program
 		if regExp.global {
 			find = -1
 			global = true
 		}
 	} else {
-		search = regexp.MustCompile(regexp.QuoteMeta(searchValue.string()))
+		literal := searchValue.string()
+		search = &regExpProgram{re: regexp.MustCompile(regexp.QuoteMeta(literal)), size: int64(len(literal)) + 1}
 	}
 
-	found := call.runtime.hookRegExp(search).FindAllSubmatchIndex(target, find)
+	found := call.runtime.regExpFindAll(search, string(target), find)
 	if found == nil {
 		return stringValue(string(target)) // !match
 	}
@@ -330,7 +330,7 @@ func builtinStringSearch(call FunctionCall) Value {
 	if !searchValue.IsObject() || search.class != classRegExpName {
 		search = call.runtime.newRegExp(searchValue, Value{})
 	}
-	result := call.runtime.hookRegExp(search.regExpValue().regularExpression).FindStringIndex(target)
+	result := call.runtime.regExpFind(search.regExpValue().program, target, 0)
 	if result == nil {
 		return intValue(-1)
 	}
@@ -358,9 +358,9 @@ func builtinStringSplit(call FunctionCall) Value {
 
 	if separatorValue.isRegExp() {
 		targetLength := len(target)
-		search := call.runtime.hookRegExp(separatorValue.object().regExpValue().regularExpression)
+		search := separatorValue.object().regExpValue().program
 		valueArray := []Value{}
-		result := search.FindAllStringSubmatchIndex(target, -1)
+		result := call.runtime.regExpFindAll(search, target, -1)
 		lastIndex := 0
 		found := 0
 

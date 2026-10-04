@@ -5,7 +5,6 @@ import (
 	"regexp/syntax"
 	"strings"
 
-	"github.com/robertkrimen/otto/internal/regexp"
 	"github.com/robertkrimen/otto/parser"
 )
 
@@ -156,33 +155,26 @@ func (rt *runtime) mapString(s string, mapping func(rune) rune) string {
 	return b.String()
 }
 
-// hookRegExp returns a copy of re that polls for interrupts while matching and
-// accounts for the memory of the matches it finds.
-func (rt *runtime) hookRegExp(re *regexp.Regexp) *regexp.Regexp {
-	var count int64
-	return re.WithHooks(rt.checkInterrupt, func(n int) {
-		rt.allocateElement(count, int64(n)*8+allocValueCost)
-		count++
-	})
-}
-
 // maxRegExpSize bounds the estimated number of instructions in a compiled
 // regular expression, which bounds both the memory used to compile it and the
 // work done per character when matching it.
 const maxRegExpSize = 1 << 16
 
 // checkRegExpSize throws a SyntaxError if pattern, in Go syntax, would
-// compile to more than maxRegExpSize instructions.
-func (rt *runtime) checkRegExpSize(pattern string) {
+// compile to more than maxRegExpSize instructions, and otherwise returns the
+// estimated number of instructions.
+func (rt *runtime) checkRegExpSize(pattern string) int64 {
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
 		// Let Compile report the error.
-		return
+		return 0
 	}
-	if regExpSize(re) > maxRegExpSize {
+	size := regExpSize(re)
+	if size > maxRegExpSize {
 		panic(rt.panicSyntaxError("Invalid regular expression: regular expression too large"))
 	}
-	rt.allocate(regExpSize(re) * 40)
+	rt.allocate(size * 40)
+	return size
 }
 
 // regExpSize estimates the number of instructions re compiles to, saturating

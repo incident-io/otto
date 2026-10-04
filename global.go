@@ -32,12 +32,12 @@ var (
 		},
 	}
 	prototypeValueRegExp = regExpObject{
-		regularExpression: nil,
-		global:            false,
-		ignoreCase:        false,
-		multiline:         false,
-		source:            "",
-		flags:             "",
+		program:    nil,
+		global:     false,
+		ignoreCase: false,
+		multiline:  false,
+		source:     "",
+		flags:      "",
 	}
 )
 

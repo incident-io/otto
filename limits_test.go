@@ -196,6 +196,11 @@ func TestNativeInterrupt(t *testing.T) {
 		"regexp-backtrack":     `var s = "a".repeat(1 << 22); for (;;) /(a|aa)*(b|c|d)$/.test(s)`,
 		"regexp-match-all":     `var s = "a".repeat(1 << 24); for (;;) s.match(/a/g)`,
 		"regexp-replace":       `var s = "a".repeat(1 << 24); for (;;) s.replace(/a/g, "b")`,
+		"regexp-quadratic":     `var s = "x".repeat(1 << 15); for (;;) s.replace(/x*y|x/g, "")`,
+		"regexp-big-program":   `var s = "a".repeat(1 << 22); for (;;) /(?:a{1,800}b|a{1,800}c)$/.test(s)`,
+		"regexp-search":        `var s = "a".repeat(1 << 22); for (;;) s.search(/(a|aa)*(b|c|d)$/)`,
+		"regexp-split":         `var s = "a".repeat(1 << 22); for (;;) s.split(/(a|aa)*(b|c|d)/)`,
+		"regexp-exec-offset":   `var s = "a".repeat(1 << 22), re = /(a|aa)*(b|c|d)$/g; for (;;) { re.lastIndex = 1; re.exec(s) }`,
 		"apply":                `for (;;) Math.max.apply(null, {length: 4294967295})`,
 		"encode-uri":           `var s = "\u0800".repeat(1 << 22); for (;;) encodeURIComponent(s)`,
 		"escape":               `var s = "\u0800".repeat(1 << 22); for (;;) escape(s)`,
@@ -231,6 +236,21 @@ func TestRegExpSizeLimit(t *testing.T) {
 	v, err := vm.Run(`/^\w{1,100}@[a-z]{2,10}$/.test("someone@example")`)
 	require.NoError(t, err)
 	require.True(t, v.bool())
+}
+
+func TestRegExpSearchContext(t *testing.T) {
+	tt(t, func() {
+		test, _ := test()
+		test(`"ab ab".replace(/\bb/g, "x")`, "ab ab")
+		test(`"a\na".replace(/^a/gm, "x")`, "x\nx")
+		test(`"aa".replace(/^a/g, "x")`, "xa")
+		test(`"a b".match(/\B|\b/g).length`, 4)
+		test(`var re = /^a/g; re.lastIndex = 1; re.exec("aa")`, "null")
+		test(`var re = /\ba/g; re.lastIndex = 1; re.exec("aa a").index`, 3)
+		test(`var re = /a/g; re.lastIndex = 2; re.exec("aéa").index`, 2)
+		test(`"x".repeat(5000).replace(/x*y|x/g, "-").length`, 5000)
+		test(`"\u00e9\u00e9".replace(/\b|/g, "-")`, "-é-é-")
+	})
 }
 
 func TestJSONParse(t *testing.T) {
