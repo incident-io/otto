@@ -61,6 +61,7 @@ issues:
     - Deferring unsafe method "Close" on type "io\.ReadCloser"
   exclude-dirs:
     - terst
+    - internal/regexp # A copy of the standard library regexp package.
   exclude-files:
     - dbg/dbg.go
     - token/token_const.go
