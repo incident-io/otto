@@ -162,19 +162,35 @@ const maxRegExpSize = 1 << 16
 
 // checkRegExpSize throws a SyntaxError if pattern, in Go syntax, would
 // compile to more than maxRegExpSize instructions, and otherwise returns the
-// estimated number of instructions.
-func (rt *runtime) checkRegExpSize(pattern string) int64 {
+// estimated number of instructions and whether the pattern is context-free
+// (see regExpContextFree).
+func (rt *runtime) checkRegExpSize(pattern string) (int64, bool) {
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
 		// Let Compile report the error.
-		return 0
+		return 0, false
 	}
 	size := regExpSize(re)
 	if size > maxRegExpSize {
 		panic(rt.panicSyntaxError("Invalid regular expression: regular expression too large"))
 	}
 	rt.allocate(size * 40)
-	return size
+	return size, regExpContextFree(re)
+}
+
+// regExpContextFree reports whether re has no assertions that look at the
+// text before the position they are tested at.
+func regExpContextFree(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpBeginLine, syntax.OpBeginText, syntax.OpWordBoundary, syntax.OpNoWordBoundary:
+		return false
+	}
+	for _, sub := range re.Sub {
+		if !regExpContextFree(sub) {
+			return false
+		}
+	}
+	return true
 }
 
 // regExpSize estimates the number of instructions re compiles to, saturating

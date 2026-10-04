@@ -264,7 +264,7 @@ func builtinStringReplace(call FunctionCall) Value {
 		}
 	} else {
 		literal := searchValue.string()
-		search = &regExpProgram{re: regexp.MustCompile(regexp.QuoteMeta(literal)), size: int64(len(literal)) + 1}
+		search = &regExpProgram{re: regexp.MustCompile(regexp.QuoteMeta(literal)), size: int64(len(literal)) + 1, contextFree: true}
 	}
 
 	found := call.runtime.regExpFindAll(search, string(target), find)

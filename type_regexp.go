@@ -60,14 +60,14 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 		re2pattern = fmt.Sprintf("(?%s:%s)", re2flags, re2pattern)
 	}
 
-	size := rt.checkRegExpSize(re2pattern)
+	size, contextFree := rt.checkRegExpSize(re2pattern)
 	regularExpression, err := regexp.Compile(re2pattern)
 	if err != nil {
 		panic(rt.panicSyntaxError("Invalid regular expression: %s", err.Error()[22:]))
 	}
 
 	o.value = regExpObject{
-		program:    &regExpProgram{re: regularExpression, size: size},
+		program:    &regExpProgram{re: regularExpression, size: size, contextFree: contextFree},
 		global:     global,
 		ignoreCase: ignoreCase,
 		multiline:  multiline,

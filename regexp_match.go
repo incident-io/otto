@@ -27,6 +27,10 @@ type regExpProgram struct {
 	after atomic.Pointer[regexp.Regexp]
 
 	size int64
+
+	// contextFree is set if re has no ^, \b or \B, so a match at an offset
+	// does not depend on the text before it.
+	contextFree bool
 }
 
 // regExpFind returns the submatch indices in s of the leftmost match of p
@@ -36,7 +40,7 @@ func (rt *runtime) regExpFind(p *regExpProgram, s string, pos int) []int {
 		return nil
 	}
 	re, start := p.re, pos
-	if pos > 0 {
+	if pos > 0 && !p.contextFree {
 		_, w := utf8.DecodeLastRuneInString(s[:pos])
 		// If pos is inside a rune there is no rune to use as context.
 		if _, fw := utf8.DecodeRuneInString(s[pos-w:]); fw == w {

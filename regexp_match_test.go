@@ -3,6 +3,7 @@ package otto
 import (
 	"math/rand"
 	"regexp"
+	"regexp/syntax"
 	"strings"
 	"testing"
 
@@ -10,7 +11,8 @@ import (
 )
 
 // TestRegExpFindAllMatchesStdlib checks that regExpFindAll, by both the direct
-// and the reader path, finds the same matches as FindAllStringSubmatchIndex.
+// and the reader path and with or without the context-free shortcut, finds
+// the same matches as FindAllStringSubmatchIndex.
 func TestRegExpFindAllMatchesStdlib(t *testing.T) {
 	patterns := []string{
 		`a`, `a*`, `\b\w+`, `\B`, `\b|\B`, `^a`, `(?m)^a`, `(?m)$`, `$`, `x*y|x`,
@@ -20,7 +22,7 @@ func TestRegExpFindAllMatchesStdlib(t *testing.T) {
 	rng := rand.New(rand.NewSource(1)) //nolint:gosec // Reproducible test inputs.
 	rt := New().runtime
 	for _, direct := range []bool{true, false} {
-		for range 5000 {
+		for range 10000 {
 			pattern := patterns[rng.Intn(len(patterns))]
 			var b strings.Builder
 			for n := rng.Intn(12); n > 0; n-- {
@@ -28,7 +30,9 @@ func TestRegExpFindAllMatchesStdlib(t *testing.T) {
 			}
 			s := b.String()
 			re := regexp.MustCompile(pattern)
-			p := &regExpProgram{re: re, size: 1}
+			parsed, err := syntax.Parse(pattern, syntax.Perl)
+			require.NoError(t, err)
+			p := &regExpProgram{re: re, size: 1, contextFree: rng.Intn(2) == 0 && regExpContextFree(parsed)}
 			if !direct {
 				p.size = regExpDirectWork
 			}
