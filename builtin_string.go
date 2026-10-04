@@ -9,7 +9,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/incident-io/otto/internal/regexp"
+	"github.com/robertkrimen/otto/internal/regexp"
 )
 
 // String

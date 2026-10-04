@@ -5,8 +5,8 @@ import (
 	"regexp/syntax"
 	"strings"
 
-	"github.com/incident-io/otto/internal/regexp"
-	"github.com/incident-io/otto/parser"
+	"github.com/robertkrimen/otto/internal/regexp"
+	"github.com/robertkrimen/otto/parser"
 )
 
 // maxNativeDepth bounds the Go recursion of the evaluator, independently of

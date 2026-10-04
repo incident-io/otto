@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"github.com/incident-io/otto/ast"
+	"github.com/robertkrimen/otto/ast"
 )
 
 type scope struct {
