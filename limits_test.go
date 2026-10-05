@@ -194,6 +194,35 @@ func TestAllocationLimit(t *testing.T) {
 	require.Equal(t, "1000", v.String())
 }
 
+func TestResourceUsage(t *testing.T) {
+	vm := New()
+	require.Equal(t, ResourceUsage{}, vm.ResourceUsage())
+
+	_, err := vm.Run(`"x".repeat(5000)`)
+	require.NoError(t, err)
+	require.Equal(t, ResourceUsage{MaxStringBytes: 5000}, vm.ResourceUsage())
+
+	vm.SetStringLengthLimit(1 << 20)
+	vm.SetAllocationLimit(64 << 20)
+	_, err = vm.Run(`var a = []; for (var i = 0; i < 100; i++) a.push({x: "y".repeat(100)}); a.join("").length`)
+	require.NoError(t, err)
+	usage := vm.ResourceUsage()
+	require.Equal(t, 5000, usage.MaxStringBytes)
+	require.Greater(t, usage.AllocatedBytes, int64(100*(100+allocObjectCost)))
+	require.Less(t, usage.AllocatedBytes, int64(1<<20))
+
+	_, err = vm.Run(`"x".repeat(2 << 20)`)
+	require.ErrorContains(t, err, "RangeError")
+	require.Equal(t, 2<<20, vm.ResourceUsage().MaxStringBytes)
+
+	_, err = vm.Run(`var b = []; for (;;) b.push({})`)
+	require.EqualError(t, err, "RangeError: Allocation limit exceeded")
+	require.GreaterOrEqual(t, vm.ResourceUsage().AllocatedBytes, int64(64<<20))
+
+	vm.SetAllocationLimit(64 << 20)
+	require.Zero(t, vm.ResourceUsage().AllocatedBytes)
+}
+
 func TestNativeInterrupt(t *testing.T) {
 	t.Parallel()
 	scripts := map[string]string{
