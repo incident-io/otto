@@ -82,6 +82,20 @@ func TestJSON_stringify(t *testing.T) {
 		defer mockUTC()()
 
 		test(`
+            var long = "a\n\"\u00e9".repeat(1 << 15);
+            var obj = {x: [long, 1]};
+            obj[long] = long;
+            var json = JSON.stringify(obj);
+            var indented = JSON.stringify(obj, null, "-");
+            [
+                json.length, JSON.stringify(JSON.parse(json)) === json, JSON.parse(json)[long] === long,
+                indented.length, indented.slice(0, 14) === '{\n-"x": [\n--"a', indented.slice(-6) === '\\"é"\n}',
+                JSON.stringify(long) === json.slice(6, 6 + (json.length - 12) / 3),
+                JSON.parse(JSON.stringify(long)) === long,
+            ];
+        `, "589842,true,true,589857,true,true,true,true")
+
+		test(`
             JSON.stringify(function(){});
         `, "undefined")
 

@@ -2,6 +2,8 @@ package parser
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -123,17 +125,50 @@ func (p *parser) parsePrimaryExpression() ast.Expression {
 			p.error(opening, "Unexpected token )")
 			return &ast.BadExpression{From: opening, To: closing}
 		}
-		expression := p.parseExpression()
+		var sequence []ast.Expression
+		var rest *ast.Identifier
+		for {
+			if p.token == token.ELLIPSIS {
+				p.next()
+				if p.token != token.IDENTIFIER {
+					p.errorUnexpectedToken(p.token)
+					return &ast.BadExpression{From: opening, To: p.idx}
+				}
+				rest = p.parseIdentifier()
+				break
+			}
+			sequence = append(sequence, p.parseAssignmentExpression())
+			if p.token != token.COMMA {
+				break
+			}
+			p.next()
+		}
+		var expression ast.Expression
+		switch {
+		case len(sequence) == 1:
+			expression = sequence[0]
+		case len(sequence) > 1:
+			expression = &ast.SequenceExpression{Sequence: sequence}
+		}
 		if p.mode&StoreComments != 0 {
 			p.comments.Unset()
 		}
 		closing := p.expect(token.RIGHT_PARENTHESIS)
+		if rest != nil && p.token != token.ARROW {
+			p.errorUnexpectedToken(p.token)
+			return &ast.BadExpression{From: opening, To: p.idx}
+		}
 		if p.token == token.ARROW {
-			params, ok := arrowParameterList(expression, opening, closing)
-			if !ok {
-				p.error(expression.Idx0(), "malformed arrow function parameter list")
-				return &ast.BadExpression{From: opening, To: p.idx}
+			params := &ast.ParameterList{Opening: opening, Closing: closing}
+			if expression != nil {
+				var ok bool
+				params, ok = arrowParameterList(expression, opening, closing)
+				if !ok {
+					p.error(expression.Idx0(), "malformed arrow function parameter list")
+					return &ast.BadExpression{From: opening, To: p.idx}
+				}
 			}
+			params.Rest = rest
 			return p.parseArrowFunction(opening, params)
 		}
 		return expression
@@ -534,6 +569,19 @@ func literalToPattern(expr ast.Expression) (ast.Expression, bool) {
 	case *ast.ObjectLiteral:
 		pattern := &ast.ObjectPattern{LeftBrace: lit.LeftBrace, RightBrace: lit.RightBrace}
 		for _, prop := range lit.Value {
+			// A rest property must be the final property and must be a plain
+			// assignment target: "{...a, b}" and "{...{a}}" are syntax errors.
+			if pattern.Rest != nil {
+				return nil, false
+			}
+			if prop.Kind == "spread" {
+				switch prop.Value.(type) {
+				case *ast.Identifier, *ast.DotExpression, *ast.BracketExpression:
+					pattern.Rest = prop.Value
+					continue
+				}
+				return nil, false
+			}
 			if prop.Kind != "value" {
 				return nil, false
 			}
@@ -712,6 +760,28 @@ func (p *parser) parseVariableDeclarationList(idx file.Idx) []ast.Expression {
 	return list
 }
 
+// numberKey returns the property key for a numeric literal, the number's
+// canonical string form: {0x10: v} and {1.50: v} define "16" and "1.5".
+func numberKey(number interface{}) string {
+	switch number := number.(type) {
+	case int64:
+		return strconv.FormatInt(number, 10)
+	case float64:
+		if math.IsInf(number, 1) {
+			return "Infinity"
+		}
+		exponent := math.Log10(math.Abs(number))
+		if exponent >= 21 || exponent < -6 {
+			s := strconv.FormatFloat(number, 'g', -1, 64)
+			return leadingZeroExponent.ReplaceAllString(s, "$1$2")
+		}
+		return strconv.FormatFloat(number, 'f', -1, 64)
+	}
+	return fmt.Sprint(number)
+}
+
+var leadingZeroExponent = regexp.MustCompile(`([eE][\+\-])0+([1-9])`)
+
 func (p *parser) parseObjectPropertyKey() (string, string) {
 	idx, tkn, literal := p.idx, p.token, p.literal
 	value := ""
@@ -724,12 +794,11 @@ func (p *parser) parseObjectPropertyKey() (string, string) {
 	case token.IDENTIFIER:
 		value = literal
 	case token.NUMBER:
-		var err error
-		_, err = parseNumberLiteral(literal)
+		number, err := parseNumberLiteral(literal)
 		if err != nil {
 			p.error(idx, err.Error())
 		} else {
-			value = literal
+			value = numberKey(number)
 		}
 	case token.STRING:
 		var err error
@@ -761,6 +830,15 @@ func (p *parser) isAccessorKey() bool {
 }
 
 func (p *parser) parseObjectProperty() ast.Property {
+	// Spread: {...source}.
+	if p.token == token.ELLIPSIS {
+		p.next()
+		return ast.Property{
+			Kind:  "spread",
+			Value: p.parseAssignmentExpression(),
+		}
+	}
+
 	// Computed property key: [expr]: value, or [expr]() { ... }.
 	if p.token == token.LEFT_BRACKET {
 		keyExpr, keyIdx := p.parseComputedPropertyKey()
@@ -987,7 +1065,7 @@ func (p *parser) parseArgumentList() (argumentList []ast.Expression, idx0, idx1 
 	return
 }
 
-func (p *parser) parseCallExpression(left ast.Expression) ast.Expression {
+func (p *parser) parseCallExpression(left ast.Expression) *ast.CallExpression {
 	argumentList, idx0, idx1 := p.parseArgumentList()
 	exp := &ast.CallExpression{
 		Callee:           left,
@@ -1004,7 +1082,11 @@ func (p *parser) parseCallExpression(left ast.Expression) ast.Expression {
 
 func (p *parser) parseDotMember(left ast.Expression) ast.Expression {
 	period := p.expect(token.PERIOD)
+	return p.parseMemberName(left, period, false)
+}
 
+// parseMemberName parses the identifier after a "." or "?." at period.
+func (p *parser) parseMemberName(left ast.Expression, period file.Idx, optional bool) ast.Expression {
 	literal := p.literal
 	idx := p.idx
 
@@ -1022,10 +1104,32 @@ func (p *parser) parseDotMember(left ast.Expression) ast.Expression {
 			Idx:  idx,
 			Name: literal,
 		},
+		Optional: optional,
 	}
 }
 
-func (p *parser) parseBracketMember(left ast.Expression) ast.Expression {
+// parseOptionalLink parses one "?." link of an optional chain: a?.b, a?.[b]
+// or a?.(args).
+func (p *parser) parseOptionalLink(left ast.Expression) ast.Expression {
+	idx := p.expect(token.QUESTION_DOT)
+	switch p.token {
+	case token.LEFT_PARENTHESIS:
+		call := p.parseCallExpression(left)
+		call.Optional = true
+		return call
+	case token.LEFT_BRACKET:
+		member := p.parseBracketMember(left)
+		member.Optional = true
+		return member
+	case token.TEMPLATE:
+		p.error(idx, "Invalid tagged template on optional chain")
+		p.nextStatement()
+		return &ast.BadExpression{From: idx, To: p.idx}
+	}
+	return p.parseMemberName(left, idx, true)
+}
+
+func (p *parser) parseBracketMember(left ast.Expression) *ast.BracketExpression {
 	idx0 := p.expect(token.LEFT_BRACKET)
 	member := p.parseExpression()
 	idx1 := p.expect(token.RIGHT_BRACKET)
@@ -1042,6 +1146,9 @@ func (p *parser) parseNewExpression() ast.Expression {
 	defer p.leave()
 	idx := p.expect(token.NEW)
 	callee := p.parseLeftHandSideExpression()
+	if p.token == token.QUESTION_DOT {
+		p.error(p.idx, "Invalid optional chain from new expression")
+	}
 	node := &ast.NewExpression{
 		New:    idx,
 		Callee: callee,
@@ -1143,11 +1250,16 @@ func (p *parser) parseLeftHandSideExpressionAllowCall() ast.Expression {
 		p.comments.SetExpression(left)
 	}
 
+	optional := false
 	for {
 		switch p.token {
 		case token.PERIOD:
 			p.enterChain(&chain)
 			left = p.parseDotMember(left)
+		case token.QUESTION_DOT:
+			p.enterChain(&chain)
+			optional = true
+			left = p.parseOptionalLink(left)
 		case token.LEFT_BRACKET:
 			p.enterChain(&chain)
 			left = p.parseBracketMember(left)
@@ -1155,9 +1267,15 @@ func (p *parser) parseLeftHandSideExpressionAllowCall() ast.Expression {
 			p.enterChain(&chain)
 			left = p.parseCallExpression(left)
 		case token.TEMPLATE:
+			if optional {
+				p.error(p.idx, "Invalid tagged template on optional chain")
+			}
 			p.enterChain(&chain)
 			left = p.parseTaggedTemplate(left)
 		default:
+			if optional {
+				return &ast.OptionalChain{Expression: left}
+			}
 			return left
 		}
 	}
@@ -1246,10 +1364,39 @@ func (p *parser) parseUnaryExpression() ast.Expression {
 	return p.parsePostfixExpression()
 }
 
+// parseExponentiationExpression parses the right-associative ** operator. Its
+// left operand may not be an unparenthesised unary expression: "-2 ** 2" is a
+// syntax error.
+func (p *parser) parseExponentiationExpression() ast.Expression {
+	p.enter()
+	defer p.leave()
+	unary := false
+	switch p.token {
+	case token.PLUS, token.MINUS, token.NOT, token.BITWISE_NOT, token.DELETE, token.VOID, token.TYPEOF:
+		unary = true
+	}
+	left := p.parseUnaryExpression()
+	if p.token != token.EXPONENT {
+		return left
+	}
+	if unary {
+		p.error(p.idx, "Unary operator used immediately before exponentiation expression")
+	}
+	if p.mode&StoreComments != 0 {
+		p.comments.Unset()
+	}
+	p.next()
+	return &ast.BinaryExpression{
+		Operator: token.EXPONENT,
+		Left:     left,
+		Right:    p.parseExponentiationExpression(),
+	}
+}
+
 func (p *parser) parseMultiplicativeExpression() ast.Expression {
 	chain := 0
 	defer p.leaveChain(&chain)
-	next := p.parseUnaryExpression
+	next := p.parseExponentiationExpression
 	left := next()
 
 	for p.token == token.MULTIPLY || p.token == token.SLASH ||
@@ -1530,8 +1677,42 @@ func (p *parser) parseLogicalOrExpression() ast.Expression {
 	return left
 }
 
-func (p *parser) parseConditionalExpression() ast.Expression {
+// parseShortCircuitExpression parses a || or && chain, or a ?? chain. The two
+// may not be mixed without parentheses: "a || b ?? c" is a syntax error.
+func (p *parser) parseShortCircuitExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
+	start := p.idx
 	left := p.parseLogicalOrExpression()
+	if p.token != token.NULLISH {
+		return left
+	}
+	// A parenthesised operand starts after its "(", so an operand that starts
+	// where this expression does was not parenthesised.
+	if be, ok := left.(*ast.BinaryExpression); ok && be.Idx0() == start &&
+		(be.Operator == token.LOGICAL_AND || be.Operator == token.LOGICAL_OR) {
+		p.error(p.idx, "Unexpected token ??")
+	}
+	for p.token == token.NULLISH {
+		if p.mode&StoreComments != 0 {
+			p.comments.Unset()
+		}
+		p.next()
+		p.enterChain(&chain)
+		left = &ast.BinaryExpression{
+			Operator: token.NULLISH,
+			Left:     left,
+			Right:    p.parseBitwiseOrExpression(),
+		}
+	}
+	if p.token == token.LOGICAL_AND || p.token == token.LOGICAL_OR {
+		p.errorUnexpectedToken(p.token)
+	}
+	return left
+}
+
+func (p *parser) parseConditionalExpression() ast.Expression {
+	left := p.parseShortCircuitExpression()
 
 	if p.token == token.QUESTION_MARK {
 		if p.mode&StoreComments != 0 {
@@ -1588,6 +1769,14 @@ func (p *parser) parseAssignmentExpression() ast.Expression {
 		operator = token.SHIFT_RIGHT
 	case token.UNSIGNED_SHIFT_RIGHT_ASSIGN:
 		operator = token.UNSIGNED_SHIFT_RIGHT
+	case token.EXPONENT_ASSIGN:
+		operator = token.EXPONENT
+	case token.LOGICAL_AND_ASSIGN:
+		operator = token.LOGICAL_AND
+	case token.LOGICAL_OR_ASSIGN:
+		operator = token.LOGICAL_OR
+	case token.NULLISH_ASSIGN:
+		operator = token.NULLISH
 	}
 
 	if operator != 0 {

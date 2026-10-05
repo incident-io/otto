@@ -47,7 +47,7 @@ func builtinRegExpExec(call FunctionCall) Value {
 	if !match {
 		return nullValue
 	}
-	return objectValue(execResultToArray(call.runtime, target, result))
+	return objectValue(execResultToArray(call.runtime, target, result, thisObject.regExpValue().program.re.SubexpNames()))
 }
 
 func builtinRegExpTest(call FunctionCall) Value {

@@ -282,8 +282,6 @@ func TestParserErr(t *testing.T) {
 
 		test("try {}", "(anonymous): Line 1:1 Missing catch or finally after try")
 
-		test("try {} catch {}", "(anonymous): Line 1:14 Unexpected token {")
-
 		test("try {} catch () {}", "(anonymous): Line 1:15 Unexpected token )")
 
 		test("\u203f = 1", "(anonymous): Line 1:1 Unexpected token ILLEGAL")

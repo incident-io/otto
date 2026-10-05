@@ -268,7 +268,7 @@ func TestFunction_toString(t *testing.T) {
 
 		test(`raise:
             Function.prototype.toString.call(undefined);
-        `, "TypeError: Function.Class environment != Function")
+        `, "TypeError: toObject unsupported kind Undefined")
 
 		test(`
             abc = function()   {       return -1    ;

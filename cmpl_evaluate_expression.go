@@ -51,6 +51,10 @@ func (rt *runtime) cmplEvaluateNodeExpressionInner(node nodeExpression) Value {
 	case *nodeDotExpression:
 		return rt.cmplEvaluateNodeDotExpression(node)
 
+	case *nodeOptionalChain:
+		value, _ := rt.evaluateChainLink(node.expression)
+		return value
+
 	case *nodeFunctionLiteral:
 		local := rt.scope.lexical
 		if node.name != "" {
@@ -193,6 +197,31 @@ func (rt *runtime) cmplEvaluateNodeAssignExpression(node *nodeAssignExpression) 
 	}
 
 	left := rt.cmplEvaluateNodeExpression(node.left)
+
+	// Logical assignment (a ||= b, a &&= b, a ??= b) only evaluates and
+	// assigns b when it would change a.
+	switch node.operator {
+	case token.LOGICAL_AND, token.LOGICAL_OR, token.NULLISH:
+		leftValue := left.resolve()
+		switch node.operator {
+		case token.LOGICAL_AND:
+			if !leftValue.bool() {
+				return leftValue
+			}
+		case token.LOGICAL_OR:
+			if leftValue.bool() {
+				return leftValue
+			}
+		default:
+			if !isNullish(leftValue) {
+				return leftValue
+			}
+		}
+		rightValue := rt.cmplEvaluateNodeExpression(node.right).resolve()
+		rt.putValue(left.reference(), rightValue)
+		return rightValue
+	}
+
 	right := rt.cmplEvaluateNodeExpression(node.right)
 	rightValue := right.resolve()
 
@@ -224,6 +253,11 @@ func (rt *runtime) cmplEvaluateNodeBinaryExpression(node *nodeBinaryExpression) 
 		}
 		right := rt.cmplEvaluateNodeExpression(node.right)
 		return right.resolve()
+	case token.NULLISH:
+		if !isNullish(leftValue) {
+			return leftValue
+		}
+		return rt.cmplEvaluateNodeExpression(node.right).resolve()
 	}
 
 	return rt.calculateBinaryExpression(node.operator, leftValue, rt.cmplEvaluateNodeExpression(node.right))
@@ -237,8 +271,12 @@ func (rt *runtime) cmplEvaluateNodeBinaryExpressionComparison(node *nodeBinaryEx
 }
 
 func (rt *runtime) cmplEvaluateNodeBracketExpression(node *nodeBracketExpression) Value {
-	target := rt.cmplEvaluateNodeExpression(node.left)
-	targetValue := target.resolve()
+	return rt.bracketMember(node, rt.cmplEvaluateNodeExpression(node.left).resolve())
+}
+
+// bracketMember evaluates node's member and returns a reference to that
+// property of targetValue.
+func (rt *runtime) bracketMember(node *nodeBracketExpression, targetValue Value) Value {
 	member := rt.cmplEvaluateNodeExpression(node.member)
 	memberValue := member.resolve()
 
@@ -266,9 +304,13 @@ func (rt *runtime) cmplEvaluateNodeCallExpression(node *nodeCallExpression, with
 		}
 	}
 
-	this := Value{}
 	callee := rt.cmplEvaluateNodeExpression(node.callee)
+	return rt.callNode(node, callee, callee.resolve(), withArgumentList)
+}
 
+// callNode calls fn, the resolved value of callee, with node's arguments.
+func (rt *runtime) callNode(node *nodeCallExpression, callee, fn Value, withArgumentList []interface{}) Value {
+	this := Value{}
 	var argumentList []Value
 	if withArgumentList != nil {
 		argumentList = rt.toValueArray(withArgumentList...)
@@ -283,11 +325,11 @@ func (rt *runtime) cmplEvaluateNodeCallExpression(node *nodeCallExpression, with
 		case *propertyReference:
 			name = rf.name
 			this = objectValue(rf.base)
-			eval = rf.name == "eval" // Possible direct eval
+			eval = rf.name == functionEval && !node.optional // Possible direct eval
 		case *stashReference:
 			// TODO ImplicitThisValue
 			name = rf.name
-			eval = rf.name == "eval" // Possible direct eval
+			eval = rf.name == functionEval && !node.optional // Possible direct eval
 		default:
 			// FIXME?
 			panic(rt.panicTypeError("unexpected callee type %T to node call expression", rf))
@@ -309,18 +351,88 @@ func (rt *runtime) cmplEvaluateNodeCallExpression(node *nodeCallExpression, with
 		file:   rt.scope.frame.file,
 	}
 
-	vl := callee.resolve()
-	if !vl.IsFunction() {
+	if !fn.IsFunction() {
 		if name == "" {
 			// FIXME Maybe typeof?
-			panic(rt.panicTypeError("%v is not a function", vl, atv))
+			panic(rt.panicTypeError("%v is not a function", fn, atv))
 		}
 		panic(rt.panicTypeError("%q is not a function", name, atv))
 	}
 
 	rt.scope.frame.offset = int(atv)
 
-	return vl.object().call(this, argumentList, eval, frm)
+	return fn.object().call(this, argumentList, eval, frm)
+}
+
+func isNullish(v Value) bool {
+	return v.kind == valueUndefined || v.kind == valueNull
+}
+
+// evaluateChainLink evaluates a member or call expression inside an optional
+// chain, reporting whether an optional link short-circuited the chain because
+// its base was null or undefined.
+func (rt *runtime) evaluateChainLink(node nodeExpression) (Value, bool) {
+	switch node := node.(type) {
+	case *nodeDotExpression:
+		if _, ok := node.left.(*nodeSuperExpression); ok {
+			break
+		}
+		base, ok := rt.evaluateChainBase(node.left, node.optional)
+		if !ok {
+			return Value{}, true
+		}
+		return rt.dotMember(node, base), false
+	case *nodeBracketExpression:
+		if _, ok := node.left.(*nodeSuperExpression); ok {
+			break
+		}
+		base, ok := rt.evaluateChainBase(node.left, node.optional)
+		if !ok {
+			return Value{}, true
+		}
+		return rt.bracketMember(node, base), false
+	case *nodeCallExpression:
+		switch callee := node.callee.(type) {
+		case *nodeSuperExpression:
+			return rt.cmplEvaluateNodeExpression(node), false
+		case *nodeDotExpression:
+			if _, ok := callee.left.(*nodeSuperExpression); ok {
+				return rt.cmplEvaluateNodeExpression(node), false
+			}
+		case *nodeBracketExpression:
+			if _, ok := callee.left.(*nodeSuperExpression); ok {
+				return rt.cmplEvaluateNodeExpression(node), false
+			}
+		}
+		rt.enterNative()
+		callee, short := rt.evaluateChainLink(node.callee)
+		rt.leaveNative()
+		if short {
+			return Value{}, true
+		}
+		fn := callee.resolve()
+		if node.optional && isNullish(fn) {
+			return Value{}, true
+		}
+		return rt.callNode(node, callee, fn, nil), false
+	}
+	return rt.cmplEvaluateNodeExpression(node), false
+}
+
+// evaluateChainBase evaluates the object a chain link accesses a member of,
+// returning false if the chain short-circuits before or at this link.
+func (rt *runtime) evaluateChainBase(node nodeExpression, optional bool) (Value, bool) {
+	rt.enterNative()
+	base, short := rt.evaluateChainLink(node)
+	rt.leaveNative()
+	if short {
+		return Value{}, false
+	}
+	value := base.resolve()
+	if optional && isNullish(value) {
+		return Value{}, false
+	}
+	return value, true
 }
 
 func (rt *runtime) cmplEvaluateNodeConditionalExpression(node *nodeConditionalExpression) Value {
@@ -371,8 +483,11 @@ func (rt *runtime) cmplEvaluateNodeDotExpression(node *nodeDotExpression) Value 
 		// super.x: read the member from the parent prototype.
 		return rt.superPrototype().get(node.identifier)
 	}
-	target := rt.cmplEvaluateNodeExpression(node.left)
-	targetValue := target.resolve()
+	return rt.dotMember(node, rt.cmplEvaluateNodeExpression(node.left).resolve())
+}
+
+// dotMember returns a reference to node's named property of targetValue.
+func (rt *runtime) dotMember(node *nodeDotExpression, targetValue Value) Value {
 	// TODO Pass in base value as-is, and defer toObject till later?
 	obj, err := rt.objectCoerce(targetValue)
 	if err != nil {
@@ -383,11 +498,7 @@ func (rt *runtime) cmplEvaluateNodeDotExpression(node *nodeDotExpression) Value 
 
 func (rt *runtime) cmplEvaluateNodeNewExpression(node *nodeNewExpression) Value {
 	callee := rt.cmplEvaluateNodeExpression(node.callee)
-
-	argumentList := []Value{}
-	for _, argumentNode := range node.argumentList {
-		argumentList = append(argumentList, rt.cmplEvaluateNodeExpression(argumentNode).resolve())
-	}
+	argumentList := rt.evaluateArgumentList(node.argumentList)
 
 	var name string
 	if rf := callee.reference(); rf != nil {
@@ -435,6 +546,19 @@ func (rt *runtime) cmplEvaluateNodeObjectLiteral(node *nodeObjectLiteral) Value 
 		switch prop.kind {
 		case "value":
 			result.defineProperty(key, rt.cmplEvaluateNodeExpression(prop.value).resolve(), 0o111, false)
+		case "spread":
+			source := rt.cmplEvaluateNodeExpression(prop.value).resolve()
+			if isNullish(source) {
+				continue
+			}
+			obj := rt.toObject(source)
+			i := 0
+			obj.enumerate(false, func(name string) bool {
+				i++
+				rt.pollInterrupt(i)
+				result.defineProperty(name, obj.get(name), 0o111, false)
+				return true
+			})
 		case "get":
 			getter := rt.newNodeFunction(prop.value.(*nodeFunctionLiteral), rt.scope.lexical)
 			descriptor := property{}

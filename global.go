@@ -48,6 +48,7 @@ func newContext() *runtime {
 	rt.globalObject = rt.globalStash.object
 
 	rt.newContext()
+	rt.globalObject.defineProperty("globalThis", objectValue(rt.globalObject), 0o101, false)
 
 	rt.eval = rt.globalObject.property["eval"].value.(Value).value.(*object)
 	rt.globalObject.prototype = rt.global.ObjectPrototype
@@ -183,7 +184,7 @@ func (rt *runtime) newError(name string, message Value, stackFramesToPop int) *o
 	obj := rt.newErrorObject(name, message, stackFramesToPop)
 	obj.prototype = rt.global.ErrorPrototype
 	if name != "" {
-		obj.defineProperty("name", stringValue(name), 0o111, false)
+		obj.defineProperty("name", stringValue(name), 0o101, false)
 	}
 	return obj
 }

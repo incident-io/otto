@@ -32,4 +32,5 @@ const (
 
 	// Common methods.
 	methodToString = "toString"
+	functionEval   = "eval"
 )
