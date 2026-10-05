@@ -58,6 +58,9 @@ linters:
     rules:
       - path: _test\.go
         text: fieldalignment
+      - path: _test\.go
+        linters:
+          - goconst
       - path: tools/tester/main.go
         text: Error return value of `fmt\.Fprint.*` is not checked
       - path: (.+)\.go$
