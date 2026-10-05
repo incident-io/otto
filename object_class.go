@@ -174,12 +174,10 @@ func objectGetOwnProperty(obj *object, name string) *property {
 
 // 8.12.2.
 func objectGetProperty(obj *object, name string) *property {
-	prop := obj.getOwnProperty(name)
-	if prop != nil {
-		return prop
-	}
-	if obj.prototype != nil {
-		return obj.prototype.getProperty(name)
+	for ; obj != nil; obj = obj.prototype {
+		if prop := obj.getOwnProperty(name); prop != nil {
+			return prop
+		}
 	}
 	return nil
 }

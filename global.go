@@ -32,12 +32,12 @@ var (
 		},
 	}
 	prototypeValueRegExp = regExpObject{
-		regularExpression: nil,
-		global:            false,
-		ignoreCase:        false,
-		multiline:         false,
-		source:            "",
-		flags:             "",
+		program:    nil,
+		global:     false,
+		ignoreCase: false,
+		multiline:  false,
+		source:     "",
+		flags:      "",
 	}
 )
 
@@ -102,6 +102,7 @@ func (rt *runtime) newArray(length uint32) *object {
 func (rt *runtime) newArrayOf(valueArray []Value) *object {
 	o := rt.newArray(uint32(len(valueArray)))
 	for index, value := range valueArray {
+		rt.pollInterrupt(index)
 		if value.isEmpty() {
 			continue
 		}

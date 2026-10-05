@@ -163,7 +163,8 @@ func New(options ...interface{}) (dbg DbgFunction, dbgf DbgFunction) {
 }
 
 func (d Dbgr) Dbg(values ...interface{}) {
-	d.getEmit().emit(_frmt{}, "", values...)
+	var noFormat string // emit prints values with Println when format is empty.
+	d.getEmit().emit(_frmt{}, noFormat, values...)
 }
 
 func (d Dbgr) Dbgf(values ...interface{}) {

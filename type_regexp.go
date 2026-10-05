@@ -8,12 +8,12 @@ import (
 )
 
 type regExpObject struct {
-	regularExpression *regexp.Regexp
-	source            string
-	flags             string
-	global            bool
-	ignoreCase        bool
-	multiline         bool
+	program    *regExpProgram
+	source     string
+	flags      string
+	global     bool
+	ignoreCase bool
+	multiline  bool
 }
 
 func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
@@ -49,6 +49,9 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 		}
 	}
 
+	if len(pattern) > maxRegExpSize*8 {
+		panic(rt.panicSyntaxError("Invalid regular expression: regular expression too large"))
+	}
 	re2pattern, err := parser.TransformRegExp(pattern)
 	if err != nil {
 		panic(rt.panicTypeError("Invalid regular expression: %s", err.Error()))
@@ -57,18 +60,19 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 		re2pattern = fmt.Sprintf("(?%s:%s)", re2flags, re2pattern)
 	}
 
+	size, contextFree := rt.checkRegExpSize(re2pattern)
 	regularExpression, err := regexp.Compile(re2pattern)
 	if err != nil {
 		panic(rt.panicSyntaxError("Invalid regular expression: %s", err.Error()[22:]))
 	}
 
 	o.value = regExpObject{
-		regularExpression: regularExpression,
-		global:            global,
-		ignoreCase:        ignoreCase,
-		multiline:         multiline,
-		source:            pattern,
-		flags:             flags,
+		program:    &regExpProgram{re: regularExpression, size: size, contextFree: contextFree},
+		global:     global,
+		ignoreCase: ignoreCase,
+		multiline:  multiline,
+		source:     pattern,
+		flags:      flags,
 	}
 	o.defineProperty("global", boolValue(global), 0, false)
 	o.defineProperty("ignoreCase", boolValue(ignoreCase), 0, false)
@@ -97,7 +101,7 @@ func execRegExp(this *object, target string) (bool, []int) {
 	var result []int
 	if 0 > index || index > int64(len(target)) {
 	} else {
-		result = this.regExpValue().regularExpression.FindStringSubmatchIndex(target[index:])
+		result = this.runtime.regExpFind(this.regExpValue().program, target, int(index))
 	}
 
 	if result == nil {
@@ -105,17 +109,8 @@ func execRegExp(this *object, target string) (bool, []int) {
 		return false, nil
 	}
 
-	startIndex := index
-	endIndex := int(lastIndex) + result[1]
-	// We do this shift here because the .FindStringSubmatchIndex above
-	// was done on a local subordinate slice of the string, not the whole string
-	for index, offset := range result {
-		if offset != -1 {
-			result[index] += int(startIndex)
-		}
-	}
 	if global {
-		this.put("lastIndex", intValue(endIndex), true)
+		this.put("lastIndex", intValue(result[1]), true)
 	}
 
 	return true, result

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,6 +31,8 @@ func (p *parser) parseIdentifier() *ast.Identifier {
 }
 
 func (p *parser) parsePrimaryExpression() ast.Expression {
+	p.enter()
+	defer p.leave()
 	literal := p.literal
 	idx := p.idx
 	switch p.token {
@@ -202,6 +205,8 @@ func (p *parser) parseTemplateLiteral(idx file.Idx, literal string) ast.Expressi
 	return node
 }
 
+const templateSubstitutionError = "invalid template substitution: "
+
 // parseTemplateExpression parses the source of a single ${ ... } substitution
 // into an expression using a sub-parser.
 func (p *parser) parseTemplateExpression(src string, idx file.Idx) ast.Expression {
@@ -210,9 +215,27 @@ func (p *parser) parseTemplateExpression(src string, idx file.Idx) ast.Expressio
 		return &ast.BadExpression{From: idx, To: idx}
 	}
 
-	program, err := ParseFile(nil, "", "("+src+"\n)", 0)
+	if p.templateDepth >= maxTemplateDepth {
+		p.error(idx, "Maximum nesting depth exceeded")
+		return &ast.BadExpression{From: idx, To: idx}
+	}
+
+	p.tickBytes(len(src))
+	sub := newParser("", "("+src+"\n)", 1, nil)
+	sub.depth = p.depth
+	sub.templateDepth = p.templateDepth + 1
+	sub.interrupt = p.interrupt
+	sub.tokens = p.tokens
+	program, err := sub.parseGuarded()
+	p.tokens = sub.tokens
 	if err != nil {
-		p.error(idx, "invalid template substitution: %s", err.Error())
+		var list *ErrorList
+		if errors.As(err, &list) && len(*list) > 0 && strings.HasPrefix((*list)[0].Message, templateSubstitutionError) {
+			// Report the innermost error once, rather than once per level.
+			p.error(idx, "%s", (*list)[0].Message)
+		} else {
+			p.error(idx, templateSubstitutionError+"%s", err.Error())
+		}
 		return &ast.BadExpression{From: idx, To: idx}
 	}
 
@@ -590,6 +613,8 @@ func (p *parser) parseBindingTargetWithDefault() ast.Expression {
 }
 
 func (p *parser) parseArrayBindingPattern() ast.Expression {
+	p.enter()
+	defer p.leave()
 	opening := p.expect(token.LEFT_BRACKET)
 	pattern := &ast.ArrayPattern{LeftBracket: opening}
 	for p.token != token.RIGHT_BRACKET && p.token != token.EOF {
@@ -613,6 +638,8 @@ func (p *parser) parseArrayBindingPattern() ast.Expression {
 }
 
 func (p *parser) parseObjectBindingPattern() ast.Expression {
+	p.enter()
+	defer p.leave()
 	opening := p.expect(token.LEFT_BRACE)
 	pattern := &ast.ObjectPattern{LeftBrace: opening}
 	for p.token != token.RIGHT_BRACE && p.token != token.EOF {
@@ -1011,6 +1038,8 @@ func (p *parser) parseBracketMember(left ast.Expression) ast.Expression {
 }
 
 func (p *parser) parseNewExpression() ast.Expression {
+	p.enter()
+	defer p.leave()
 	idx := p.expect(token.NEW)
 	callee := p.parseLeftHandSideExpression()
 	node := &ast.NewExpression{
@@ -1032,6 +1061,8 @@ func (p *parser) parseNewExpression() ast.Expression {
 }
 
 func (p *parser) parseLeftHandSideExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	var left ast.Expression
 	if p.token == token.NEW {
 		left = p.parseNewExpression()
@@ -1050,10 +1081,13 @@ func (p *parser) parseLeftHandSideExpression() ast.Expression {
 	for {
 		switch p.token {
 		case token.PERIOD:
+			p.enterChain(&chain)
 			left = p.parseDotMember(left)
 		case token.LEFT_BRACKET:
+			p.enterChain(&chain)
 			left = p.parseBracketMember(left)
 		case token.TEMPLATE:
+			p.enterChain(&chain)
 			left = p.parseTaggedTemplate(left)
 		default:
 			return left
@@ -1077,6 +1111,8 @@ func (p *parser) parseTaggedTemplate(tag ast.Expression) ast.Expression {
 }
 
 func (p *parser) parseLeftHandSideExpressionAllowCall() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	allowIn := p.scope.allowIn
 	p.scope.allowIn = true
 	defer func() {
@@ -1110,12 +1146,16 @@ func (p *parser) parseLeftHandSideExpressionAllowCall() ast.Expression {
 	for {
 		switch p.token {
 		case token.PERIOD:
+			p.enterChain(&chain)
 			left = p.parseDotMember(left)
 		case token.LEFT_BRACKET:
+			p.enterChain(&chain)
 			left = p.parseBracketMember(left)
 		case token.LEFT_PARENTHESIS:
+			p.enterChain(&chain)
 			left = p.parseCallExpression(left)
 		case token.TEMPLATE:
+			p.enterChain(&chain)
 			left = p.parseTaggedTemplate(left)
 		default:
 			return left
@@ -1163,6 +1203,8 @@ func (p *parser) parsePostfixExpression() ast.Expression {
 }
 
 func (p *parser) parseUnaryExpression() ast.Expression {
+	p.enter()
+	defer p.leave()
 	switch p.token {
 	case token.PLUS, token.MINUS, token.NOT, token.BITWISE_NOT:
 		fallthrough
@@ -1205,6 +1247,8 @@ func (p *parser) parseUnaryExpression() ast.Expression {
 }
 
 func (p *parser) parseMultiplicativeExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseUnaryExpression
 	left := next()
 
@@ -1216,6 +1260,7 @@ func (p *parser) parseMultiplicativeExpression() ast.Expression {
 		}
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1227,6 +1272,8 @@ func (p *parser) parseMultiplicativeExpression() ast.Expression {
 }
 
 func (p *parser) parseAdditiveExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseMultiplicativeExpression
 	left := next()
 
@@ -1237,6 +1284,7 @@ func (p *parser) parseAdditiveExpression() ast.Expression {
 		}
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1248,6 +1296,8 @@ func (p *parser) parseAdditiveExpression() ast.Expression {
 }
 
 func (p *parser) parseShiftExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseAdditiveExpression
 	left := next()
 
@@ -1259,6 +1309,7 @@ func (p *parser) parseShiftExpression() ast.Expression {
 		}
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1270,6 +1321,8 @@ func (p *parser) parseShiftExpression() ast.Expression {
 }
 
 func (p *parser) parseRelationalExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseShiftExpression
 	left := next()
 
@@ -1287,6 +1340,7 @@ func (p *parser) parseRelationalExpression() ast.Expression {
 		}
 		p.next()
 
+		p.enterChain(&chain)
 		exp := &ast.BinaryExpression{
 			Operator:   tkn,
 			Left:       left,
@@ -1301,6 +1355,7 @@ func (p *parser) parseRelationalExpression() ast.Expression {
 		}
 		p.next()
 
+		p.enterChain(&chain)
 		exp := &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1317,6 +1372,7 @@ func (p *parser) parseRelationalExpression() ast.Expression {
 		}
 		p.next()
 
+		p.enterChain(&chain)
 		exp := &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1329,6 +1385,8 @@ func (p *parser) parseRelationalExpression() ast.Expression {
 }
 
 func (p *parser) parseEqualityExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseRelationalExpression
 	left := next()
 
@@ -1340,6 +1398,7 @@ func (p *parser) parseEqualityExpression() ast.Expression {
 		}
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator:   tkn,
 			Left:       left,
@@ -1352,6 +1411,8 @@ func (p *parser) parseEqualityExpression() ast.Expression {
 }
 
 func (p *parser) parseBitwiseAndExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseEqualityExpression
 	left := next()
 
@@ -1362,6 +1423,7 @@ func (p *parser) parseBitwiseAndExpression() ast.Expression {
 		tkn := p.token
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1373,6 +1435,8 @@ func (p *parser) parseBitwiseAndExpression() ast.Expression {
 }
 
 func (p *parser) parseBitwiseExclusiveOrExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseBitwiseAndExpression
 	left := next()
 
@@ -1383,6 +1447,7 @@ func (p *parser) parseBitwiseExclusiveOrExpression() ast.Expression {
 		tkn := p.token
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1394,6 +1459,8 @@ func (p *parser) parseBitwiseExclusiveOrExpression() ast.Expression {
 }
 
 func (p *parser) parseBitwiseOrExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseBitwiseExclusiveOrExpression
 	left := next()
 
@@ -1404,6 +1471,7 @@ func (p *parser) parseBitwiseOrExpression() ast.Expression {
 		tkn := p.token
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1415,6 +1483,8 @@ func (p *parser) parseBitwiseOrExpression() ast.Expression {
 }
 
 func (p *parser) parseLogicalAndExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseBitwiseOrExpression
 	left := next()
 
@@ -1425,6 +1495,7 @@ func (p *parser) parseLogicalAndExpression() ast.Expression {
 		tkn := p.token
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1436,6 +1507,8 @@ func (p *parser) parseLogicalAndExpression() ast.Expression {
 }
 
 func (p *parser) parseLogicalOrExpression() ast.Expression {
+	chain := 0
+	defer p.leaveChain(&chain)
 	next := p.parseLogicalAndExpression
 	left := next()
 
@@ -1446,6 +1519,7 @@ func (p *parser) parseLogicalOrExpression() ast.Expression {
 		tkn := p.token
 		p.next()
 
+		p.enterChain(&chain)
 		left = &ast.BinaryExpression{
 			Operator: tkn,
 			Left:     left,
@@ -1483,6 +1557,8 @@ func (p *parser) parseConditionalExpression() ast.Expression {
 }
 
 func (p *parser) parseAssignmentExpression() ast.Expression {
+	p.enter()
+	defer p.leave()
 	left := p.parseConditionalExpression()
 	var operator token.Token
 	switch p.token {

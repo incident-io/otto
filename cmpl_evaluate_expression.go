@@ -19,6 +19,13 @@ func (rt *runtime) cmplEvaluateNodeExpression(node nodeExpression) Value {
 		rt.checkInterrupt()
 	}
 
+	rt.enterNative()
+	value := rt.cmplEvaluateNodeExpressionInner(node)
+	rt.leaveNative()
+	return value
+}
+
+func (rt *runtime) cmplEvaluateNodeExpressionInner(node nodeExpression) Value {
 	switch node := node.(type) {
 	case *nodeArrayLiteral:
 		return rt.cmplEvaluateNodeArrayLiteral(node)
@@ -93,9 +100,12 @@ func (rt *runtime) cmplEvaluateNodeExpression(node nodeExpression) Value {
 	case *nodeTemplateLiteral:
 		var b strings.Builder
 		for i, str := range node.strings {
+			rt.allocateString(b.Len() + len(str))
 			b.WriteString(str)
 			if i < len(node.expressions) {
-				b.WriteString(rt.cmplEvaluateNodeExpression(node.expressions[i]).resolve().string())
+				sub := rt.cmplEvaluateNodeExpression(node.expressions[i]).resolve().string()
+				rt.allocateString(b.Len() + len(sub))
+				b.WriteString(sub)
 			}
 		}
 		return stringValue(b.String())
@@ -151,16 +161,20 @@ func (rt *runtime) spreadIterable(value Value) []Value {
 	switch value.kind {
 	case valueString:
 		runes := []rune(value.string())
+		rt.allocateDense(int64(len(runes)), allocValueCost)
 		out := make([]Value, len(runes))
 		for i, r := range runes {
+			rt.pollInterrupt(i)
 			out[i] = stringValue(string(r))
 		}
 		return out
 	case valueObject:
 		obj := value.object()
 		length := int64(toUint32(obj.get(propertyLength)))
-		out := make([]Value, 0, length)
+		out := make([]Value, 0, preallocation(length))
 		for i := range length {
+			rt.checkInterrupt()
+			rt.allocateElement(i, allocValueCost)
 			out = append(out, obj.get(arrayIndexToString(i)))
 		}
 		return out

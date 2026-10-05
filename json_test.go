@@ -67,11 +67,11 @@ func TestJSON_parse(t *testing.T) {
 
 		test(`raise:
             JSON.parse("[1, 2, ; abc=10");
-        `, "SyntaxError: invalid character ';' looking for beginning of value")
+        `, "SyntaxError: invalid character ';' at start of value within \"/2\" after offset 7")
 
 		test(`raise:
             JSON.parse("[1, 2, function(){}]");
-        `, "SyntaxError: invalid character 'u' in literal false (expecting 'a')")
+        `, "SyntaxError: invalid character 'u' in literal false (expecting 'a') within \"/2\" after offset 8")
 	})
 }
 

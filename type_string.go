@@ -31,21 +31,21 @@ type stringWide struct {
 	value16 []uint16
 }
 
-func (str stringWide) Length() int {
+func (str *stringWide) Length() int {
 	if str.value16 == nil {
 		str.value16 = utf16.Encode([]rune(str.string))
 	}
 	return len(str.value16)
 }
 
-func (str stringWide) At(at int) rune {
+func (str *stringWide) At(at int) rune {
 	if str.value16 == nil {
 		str.value16 = utf16.Encode([]rune(str.string))
 	}
 	return rune(str.value16[at])
 }
 
-func (str stringWide) String() string {
+func (str *stringWide) String() string {
 	return str.string
 }
 

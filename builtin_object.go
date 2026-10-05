@@ -369,8 +369,8 @@ func builtinObjectSetPrototypeOf(call FunctionCall) Value {
 	// For non-object values (primitives) the prototype cannot change, but per
 	// spec the value is returned unchanged.
 	obj := val.object()
-	if obj != nil {
-		obj.prototype = proto.object()
+	if obj != nil && !obj.setPrototype(proto.object()) {
+		panic(call.runtime.panicTypeError("Cyclic __proto__ value"))
 	}
 
 	return val

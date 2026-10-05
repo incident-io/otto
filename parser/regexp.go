@@ -15,6 +15,7 @@ type regExpParser struct {
 	offset    int
 	chr       rune
 	invalid   bool
+	depth     int
 }
 
 // TransformRegExp transforms a JavaScript pattern into  a Go "regexp" pattern.
@@ -80,6 +81,14 @@ func (p *regExpParser) scan() {
 
 // (...)
 func (p *regExpParser) scanGroup() {
+	p.depth++
+	defer func() { p.depth-- }()
+	if p.depth > maxDepth {
+		p.error(-1, "Maximum nesting depth exceeded")
+		p.invalid = true
+		p.chr = -1
+		return
+	}
 	str := p.str[p.chrOffset:]
 	if len(str) > 1 { // A possibility of (?= or (?!
 		if str[0] == '?' {

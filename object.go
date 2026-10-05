@@ -19,7 +19,22 @@ func newObject(rt *runtime, class string) *object {
 		property:    make(map[string]property),
 		extensible:  true,
 	}
+	if rt != nil {
+		rt.allocate(allocObjectCost)
+	}
 	return o
+}
+
+// setPrototype sets o's prototype to proto, returning false and leaving it
+// unchanged if that would create a prototype cycle.
+func (o *object) setPrototype(proto *object) bool {
+	for p := proto; p != nil; p = p.prototype {
+		if p == o {
+			return false
+		}
+	}
+	o.prototype = proto
+	return true
 }
 
 // 8.12
@@ -125,6 +140,9 @@ func (o *object) writeProperty(name string, value interface{}, mode propertyMode
 		value = Value{}
 	}
 	if _, exists := o.property[name]; !exists {
+		if o.runtime != nil {
+			o.runtime.allocate(allocPropertyCost + int64(len(name)))
+		}
 		o.propertyOrder = append(o.propertyOrder, name)
 	}
 	o.property[name] = property{value, mode}

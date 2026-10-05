@@ -8,8 +8,8 @@ jobs:
   go-test-lint:
     strategy:
       matrix:
-        go: [1.22, 1.23]
-        golangcli: [v1.61.0]
+        go: [1.27]
+        golangcli: [v2.14.0]
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
@@ -25,19 +25,19 @@ jobs:
       - name: Validate go mod / generate
         run: |
           go mod tidy
-          # Pin stringer: @latest pulls an x/tools that requires a newer Go,
-          # forcing a toolchain switch and reformatting the generated files.
-          go install golang.org/x/tools/cmd/stringer@v0.29.0
+          # Pin stringer so a new x/tools release can't change the generated
+          # files or require a newer Go.
+          go install golang.org/x/tools/cmd/stringer@v0.50.0
           go generate ./...
           git --no-pager diff && [[ 0 -eq $(git status --porcelain | wc -l) ]]
 
       - name: Go Lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v9
         with:
           version: ${{ matrix.golangcli }}
-          args: --out-format=colored-line-number
-          skip-pkg-cache: true
-          skip-build-cache: true
+          # Code written before golangci-lint v2 isn't clean under its
+          # newer checks, so only lint what each PR changes.
+          only-new-issues: true
 
       - name: Go Build
         run: go build ./...

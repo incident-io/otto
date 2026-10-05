@@ -392,6 +392,19 @@ func (o Otto) SetStringLengthLimit(limit int) {
 	o.runtime.stringLimit = limit
 }
 
+// SetAllocationLimit sets an approximate upper limit, in bytes, on the memory
+// that JavaScript code may cause the runtime to allocate for objects,
+// properties, arrays, strings and regular expressions. Exceeding it panics
+// out of the running script like an interrupt, so it cannot be caught by
+// JavaScript try/catch, and Run and friends return a RangeError.
+//
+// Allocations are counted cumulatively, without regard to garbage collection,
+// from when the limit was last set. A limit of 0 (the default) means no limit.
+func (o Otto) SetAllocationLimit(limit int64) {
+	o.runtime.allocLimit = limit
+	o.runtime.allocated = 0
+}
+
 // SetStackTraceLimit sets an upper limit to the number of stack frames that
 // otto will use when formatting an error's stack trace. By default, the limit
 // is 10. This is consistent with V8 and SpiderMonkey.

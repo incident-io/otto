@@ -50,6 +50,8 @@ func (p *parser) parseStatementList() (list []ast.Statement) { //nolint:nonamedr
 }
 
 func (p *parser) parseStatement() ast.Statement {
+	p.enter()
+	defer p.leave()
 	if p.token == token.EOF {
 		p.errorUnexpectedToken(p.token)
 		return &ast.BadStatement{From: p.idx, To: p.idx + 1}

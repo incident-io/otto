@@ -22,15 +22,7 @@ func builtinJSONParse(call FunctionCall) Value {
 		ctx.reviver = reviver
 	}
 
-	var root interface{}
-	err := json.Unmarshal([]byte(call.Argument(0).string()), &root)
-	if err != nil {
-		panic(call.runtime.panicSyntaxError(err.Error()))
-	}
-	value, exists := builtinJSONParseWalk(ctx, root)
-	if !exists {
-		value = Value{}
-	}
+	value := call.runtime.parseJSON(call.Argument(0).string())
 	if revive {
 		root := ctx.call.runtime.newObject()
 		root.put("", value, false)
@@ -40,6 +32,8 @@ func builtinJSONParse(call FunctionCall) Value {
 }
 
 func builtinJSONReviveWalk(ctx builtinJSONParseContext, holder *object, name string) Value {
+	ctx.call.runtime.enterNative()
+	defer ctx.call.runtime.leaveNative()
 	value := holder.get(name)
 	if obj := value.object(); obj != nil {
 		if isArray(obj) {
@@ -69,36 +63,6 @@ func builtinJSONReviveWalk(ctx builtinJSONParseContext, holder *object, name str
 	return ctx.reviver.call(ctx.call.runtime, objectValue(holder), name, value)
 }
 
-func builtinJSONParseWalk(ctx builtinJSONParseContext, rawValue interface{}) (Value, bool) {
-	switch value := rawValue.(type) {
-	case nil:
-		return nullValue, true
-	case bool:
-		return boolValue(value), true
-	case string:
-		return stringValue(value), true
-	case float64:
-		return float64Value(value), true
-	case []interface{}:
-		arrayValue := make([]Value, len(value))
-		for index, rawValue := range value {
-			if value, exists := builtinJSONParseWalk(ctx, rawValue); exists {
-				arrayValue[index] = value
-			}
-		}
-		return objectValue(ctx.call.runtime.newArrayOf(arrayValue)), true
-	case map[string]interface{}:
-		obj := ctx.call.runtime.newObject()
-		for name, rawValue := range value {
-			if value, exists := builtinJSONParseWalk(ctx, rawValue); exists {
-				obj.put(name, value, false)
-			}
-		}
-		return objectValue(obj), true
-	}
-	return Value{}, false
-}
-
 type builtinJSONStringifyContext struct {
 	replacerFunction *Value
 	size             *int
@@ -113,6 +77,7 @@ type builtinJSONStringifyContext struct {
 func (ctx builtinJSONStringifyContext) grow(size int) {
 	*ctx.size += size
 	ctx.call.runtime.checkStringLength(*ctx.size)
+	ctx.call.runtime.allocate(int64(size))
 }
 
 func builtinJSONStringify(call FunctionCall) Value {
@@ -202,6 +167,8 @@ func builtinJSONStringify(call FunctionCall) Value {
 }
 
 func builtinJSONStringifyWalk(ctx builtinJSONStringifyContext, key string, holder *object) (interface{}, bool) {
+	ctx.call.runtime.enterNative()
+	defer ctx.call.runtime.leaveNative()
 	value := holder.get(key)
 
 	if value.IsObject() {

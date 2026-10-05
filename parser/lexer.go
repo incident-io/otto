@@ -363,7 +363,7 @@ func (p *parser) scan() (tkn token.Token, literal string, idx file.Idx) { //noli
 				insertSemicolon = true
 				tkn = token.TEMPLATE
 				var err error
-				literal, err = p.scanTemplate(p.chrOffset - 1)
+				literal, err = p.scanTemplate(p.chrOffset-1, p.templateDepth+1)
 				if err != nil {
 					p.error(idx, err.Error())
 					tkn = token.ILLEGAL
@@ -666,8 +666,11 @@ var errInvalidTemplate = errors.New("unterminated template literal")
 // backtick, and returns its raw source including the enclosing backticks.
 // Substitutions (${ ... }) are scanned but not interpreted here; the parser
 // later splits the raw literal into cooked strings and embedded expressions.
-func (p *parser) scanTemplate(offset int) (string, error) {
+// depth is the template's nesting depth, counting the templates of enclosing
+// parsers.
+func (p *parser) scanTemplate(offset, depth int) (string, error) {
 	for p.chr != '`' {
+		p.tick()
 		switch p.chr {
 		case -1:
 			return "", errors.New("unterminated template literal")
@@ -679,8 +682,11 @@ func (p *parser) scanTemplate(offset int) (string, error) {
 		case '$':
 			p.read() // dollar
 			if p.chr == '{' {
+				if depth > maxTemplateDepth {
+					panic(tooDeepPanic{})
+				}
 				p.read() // opening brace
-				if err := p.scanTemplateSubstitution(); err != nil {
+				if err := p.scanTemplateSubstitution(depth); err != nil {
 					return "", err
 				}
 			}
@@ -697,9 +703,10 @@ func (p *parser) scanTemplate(offset int) (string, error) {
 // and including its matching closing brace, skipping over nested braces, string
 // literals and nested template literals so that braces and backticks appearing
 // inside them do not prematurely terminate the substitution.
-func (p *parser) scanTemplateSubstitution() error {
+func (p *parser) scanTemplateSubstitution(templateDepth int) error {
 	depth := 1
 	for depth > 0 {
+		p.tick()
 		switch p.chr {
 		case -1:
 			return errors.New("unterminated template literal")
@@ -711,7 +718,7 @@ func (p *parser) scanTemplateSubstitution() error {
 			p.read()
 		case '`':
 			p.read() // opening backtick of a nested template
-			if _, err := p.scanTemplate(p.chrOffset - 1); err != nil {
+			if _, err := p.scanTemplate(p.chrOffset-1, templateDepth+1); err != nil {
 				return err
 			}
 		case '"', '\'':

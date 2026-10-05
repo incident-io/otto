@@ -1,73 +1,93 @@
-run:
-  timeout: 6m
-
-linters-settings:
-  govet:
-    settings:
-      shadow:
-        strict: true
-    enable-all: true
-  goconst:
-    min-len: 2
-    min-occurrences: 4
-  revive:
-    enable-all-rules: false
-    rules:
-    - name: var-naming
-      disabled: true
-  gosec:
-    excludes:
-      - G115 # Too many false positives.
-
+version: "2"
 linters:
-  enable-all: true
+  default: all
   disable:
+    - cyclop
+    - depguard
     - dupl
-    - lll
+    - dupword
+    - err113
+    - exhaustive
+    - exhaustruct
+    - forcetypeassert
+    - funlen
     - gochecknoglobals
     - gochecknoinits
-    - funlen
-    - godox
-    - err113
-    - wsl
-    - nlreturn
-    - gomnd
-    - mnd
-    - paralleltest
-    - wrapcheck
-    - testpackage
     - gocognit
-    - nestif
-    - exhaustive
-    - forcetypeassert
     - gocyclo
-    - cyclop
-    - varnamelen
-    - maintidx
+    - godox
     - ireturn
-    - exhaustruct
-    - dupword
-    # Just causes noise
-    - depguard
-    # Deprecated
-    - execinquery
-    # Not needed in go 1.22+
-    - exportloopref
-
+    - lll
+    - maintidx
+    - mnd
+    - nestif
+    - nlreturn
+    - paralleltest
+    - testpackage
+    - varnamelen
+    - wrapcheck
+    - wsl
+    # Added since golangci-lint v1.61.
+    - embeddedstructfieldcheck
+    - exhaustruct_v5
+    - funcorder
+    - gomodguard
+    - modernize
+    - noinlineerr
+    - recvcheck
+    - wsl_v5
+  settings:
+    goconst:
+      min-len: 2
+      min-occurrences: 4
+    gosec:
+      excludes:
+        - G115
+    govet:
+      enable-all: true
+      settings:
+        shadow:
+          strict: true
+    revive:
+      enable-all-rules: false
+      rules:
+        - name: var-naming
+          disabled: true
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        text: fieldalignment
+      - path: _test\.go
+        linters:
+          - goconst
+      - path: tools/tester/main.go
+        text: Error return value of `fmt\.Fprint.*` is not checked
+      - path: (.+)\.go$
+        text: Deferring unsafe method "Close" on type "io\.ReadCloser"
+    paths:
+      - dbg/dbg.go
+      - token/token_const.go
+      - terst
+      - internal/regexp
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-use-default: false
   max-same-issues: 0
-  exclude:
-    - Deferring unsafe method "Close" on type "io\.ReadCloser"
-  exclude-dirs:
-    - terst
-  exclude-files:
-    - dbg/dbg.go
-    - token/token_const.go
-  exclude-rules:
-    # Field alignment in tests isn't a performance issue.
-    - text: fieldalignment
-      path: _test\.go
-    - text: Error return value of `fmt\.Fprint.*` is not checked
-      path: tools/tester/main.go
-
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - dbg/dbg.go
+      - token/token_const.go
+      - terst
+      - internal/regexp
+      - third_party$
+      - builtin$
+      - examples$

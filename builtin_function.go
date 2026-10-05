@@ -41,7 +41,7 @@ func builtinNewFunctionNative(rt *runtime, argumentList []Value) *object {
 	}
 
 	// FIXME
-	function, err := parser.ParseFunction(parameterList, body)
+	function, err := parser.ParseFunction(parameterList, body, rt.parserOptions()...)
 	rt.parseThrow(err) // Will panic/throw appropriately
 	cmpl := compiler{}
 	cmplFunction := cmpl.parseExpression(function)
@@ -87,6 +87,7 @@ func builtinFunctionApply(call FunctionCall) Value {
 	valueArray := make([]Value, 0, preallocation(length))
 	for index := range length {
 		call.runtime.checkInterrupt()
+		call.runtime.allocateElement(index, allocValueCost)
 		valueArray = append(valueArray, arrayObject.get(arrayIndexToString(index)))
 	}
 	return thisObject.call(this, valueArray, false, nativeFrame)
