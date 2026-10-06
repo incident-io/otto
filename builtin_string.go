@@ -91,10 +91,21 @@ func builtinStringRaw(call FunctionCall) Value {
 	return stringValue(b.String())
 }
 
+// thisStringObject returns call.This as a stringObjecter, reusing the one held by
+// a String object so a method call on a primitive scans the string only once.
+func thisStringObject(call FunctionCall) stringObjecter {
+	if obj := call.This.object(); obj != nil {
+		if str := obj.stringValue(); str != nil {
+			return str
+		}
+	}
+	return newStringObject(call.This.string())
+}
+
 func builtinStringCharAt(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
 	idx := int(call.Argument(0).number().int64)
-	chr := stringAt(newStringObject(call.This.string()), idx)
+	chr := stringAt(thisStringObject(call), idx)
 	if chr == utf8.RuneError {
 		return stringValue("")
 	}
@@ -104,7 +115,7 @@ func builtinStringCharAt(call FunctionCall) Value {
 func builtinStringCharCodeAt(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
 	idx := int(call.Argument(0).number().int64)
-	chr := stringAt(newStringObject(call.This.string()), idx)
+	chr := stringAt(thisStringObject(call), idx)
 	if chr == utf8.RuneError {
 		return NaNValue()
 	}
@@ -113,7 +124,7 @@ func builtinStringCharCodeAt(call FunctionCall) Value {
 
 func builtinStringCodePointAt(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
-	str := newStringObject(call.This.string())
+	str := thisStringObject(call)
 	idx := int(call.Argument(0).number().int64)
 	if idx < 0 || idx >= str.Length() {
 		return Value{}
@@ -702,7 +713,7 @@ func builtinStringPadEnd(call FunctionCall) Value {
 
 func builtinStringAt(call FunctionCall) Value {
 	checkObjectCoercible(call.runtime, call.This)
-	str := newStringObject(call.This.string())
+	str := thisStringObject(call)
 	length := str.Length()
 	idx := int(toIntegerFloat(call.Argument(0)))
 	if idx < 0 {
