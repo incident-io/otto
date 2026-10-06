@@ -71,6 +71,8 @@ type runtime struct {
 	allocated    int64
 	maxString    int
 	unwinding    bool // an interrupt or resource limit panic is unwinding the stack
+	boxedString  string
+	boxedValue   stringObjecter
 	lck          sync.Mutex
 }
 

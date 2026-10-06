@@ -71,8 +71,21 @@ func stringAt(str stringObjecter, index int) rune {
 	return utf8.RuneError
 }
 
+// stringObjecter returns the scanned form of str, reusing the last one for the same string,
+// so that a script calling methods on a primitive string in a loop doesn't rescan it, and
+// for non-ASCII strings re-encode it, on every call. Comparing a string with itself is
+// cheap, as Go checks whether both share their memory before comparing bytes.
+func (rt *runtime) stringObjecter(str string) stringObjecter {
+	if rt.boxedValue != nil && str == rt.boxedString {
+		return rt.boxedValue
+	}
+	rt.boxedString = str
+	rt.boxedValue = newStringObject(str)
+	return rt.boxedValue
+}
+
 func (rt *runtime) newStringObject(value Value) *object {
-	str := newStringObject(value.string())
+	str := rt.stringObjecter(value.string())
 
 	obj := rt.newClassObject(classStringName)
 	obj.defineProperty(propertyLength, intValue(str.Length()), 0, false)
