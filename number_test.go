@@ -109,11 +109,11 @@ func TestNumber_toExponential(t *testing.T) {
 	tt(t, func() {
 		test, _ := test()
 
-		test(`new Number(451).toExponential(2)`, "4.51e+02")
-		test(`77.1234.toExponential()`, "7.71234e+01")
-		test(`77.1234.toExponential(4)`, "7.7123e+01")
-		test(`77.1234.toExponential(2)`, "7.71e+01")
-		test(`77 .toExponential()`, "7.7e+01")
+		test(`new Number(451).toExponential(2)`, "4.51e+2")
+		test(`77.1234.toExponential()`, "7.71234e+1")
+		test(`77.1234.toExponential(4)`, "7.7123e+1")
+		test(`77.1234.toExponential(2)`, "7.71e+1")
+		test(`77 .toExponential()`, "7.7e+1")
 	})
 }
 
@@ -122,7 +122,7 @@ func TestNumber_toPrecision(t *testing.T) {
 		test, _ := test()
 
 		test(`new Number(451).toPrecision()`, "451")
-		test(`new Number(451).toPrecision(1)`, "5e+02")
+		test(`new Number(451).toPrecision(1)`, "5e+2")
 		test(`5.123456.toPrecision()`, "5.123456")
 		test(`5.123456.toPrecision(5)`, "5.1235")
 		test(`5.123456.toPrecision(2)`, "5.1")

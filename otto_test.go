@@ -1547,6 +1547,7 @@ func TestOttoContext(t *testing.T) {
 		"TypeError",
 		classStringName,
 		"isFinite",
+		"globalThis",
 		"undefined",
 	}
 

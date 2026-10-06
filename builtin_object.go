@@ -40,6 +40,11 @@ func builtinObjectHasOwnProperty(call FunctionCall) Value {
 	return boolValue(thisObject.hasOwnProperty(propertyName))
 }
 
+func builtinObjectHasOwn(call FunctionCall) Value {
+	obj := call.runtime.toObject(call.Argument(0))
+	return boolValue(obj.hasOwnProperty(call.Argument(1).string()))
+}
+
 func builtinObjectIsPrototypeOf(call FunctionCall) Value {
 	value := call.Argument(0)
 	if !value.IsObject() {
@@ -407,4 +412,52 @@ func builtinObjectGetOwnPropertyNames(call FunctionCall) Value {
 
 	// Default to empty array for non object types.
 	return objectValue(call.runtime.newArray(0))
+}
+
+func builtinObjectGroupBy(call FunctionCall) Value {
+	itemsValue := call.Argument(0)
+	callback := call.Argument(1)
+	if !callback.isCallable() {
+		panic(call.runtime.panicTypeError("Object.groupBy %q is not a function", callback))
+	}
+	var items *object
+	switch {
+	case itemsValue.IsString():
+		items = call.runtime.newArrayOf(stringCodePoints(call.runtime, itemsValue.string()))
+	case isArray(itemsValue.object()):
+		items = itemsValue.object()
+	default:
+		panic(call.runtime.panicTypeError("Object.groupBy %q is not iterable", itemsValue))
+	}
+
+	result := call.runtime.newObject()
+	result.prototype = nil
+	groups := map[string]*object{}
+	length := int64(toUint32(items.get(propertyLength)))
+	for index := range length {
+		call.runtime.checkInterrupt()
+		value := items.get(arrayIndexToString(index))
+		key := callback.call(call.runtime, Value{}, value, index).string()
+		group, exists := groups[key]
+		if !exists {
+			call.runtime.allocate(allocObjectCost + allocPropertyCost)
+			group = call.runtime.newArray(0)
+			groups[key] = group
+			result.put(key, objectValue(group), true)
+		}
+		call.runtime.allocate(allocPropertyCost)
+		group.put(arrayIndexToString(int64(toUint32(group.get(propertyLength)))), value, true)
+	}
+	return objectValue(result)
+}
+
+// stringCodePoints splits str into its code points, as string iteration does.
+func stringCodePoints(rt *runtime, str string) []Value {
+	rt.allocateDense(int64(len(str)), allocValueCost)
+	values := make([]Value, 0, len(str))
+	for _, chr := range str {
+		rt.pollInterrupt(len(values))
+		values = append(values, stringValue(string(chr)))
+	}
+	return values
 }

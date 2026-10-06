@@ -501,6 +501,61 @@ func builtinArraySort(call FunctionCall) Value {
 	return call.This
 }
 
+func builtinArrayToReversed(call FunctionCall) Value {
+	thisObject := call.thisObject()
+	length := int64(toUint32(thisObject.get(propertyLength)))
+	call.runtime.allocateDense(length, allocValueCost+allocPropertyCost)
+	values := make([]Value, length)
+	for index := range length {
+		call.runtime.checkInterrupt()
+		values[length-index-1] = thisObject.get(arrayIndexToString(index))
+	}
+	return objectValue(call.runtime.newArrayOf(values))
+}
+
+func builtinArrayToSorted(call FunctionCall) Value {
+	compareValue := call.Argument(0)
+	if compareValue.IsDefined() && !compareValue.isCallable() {
+		panic(call.runtime.panicTypeError("Array.toSorted value %q is not callable", compareValue))
+	}
+	thisObject := call.thisObject()
+	length := int64(toUint32(thisObject.get(propertyLength)))
+	call.runtime.allocateDense(length, allocValueCost+allocPropertyCost)
+	values := make([]Value, length)
+	for index := range length {
+		call.runtime.checkInterrupt()
+		values[index] = thisObject.get(arrayIndexToString(index))
+	}
+	sorted := call.runtime.newArrayOf(values)
+	if length > 1 {
+		arraySortQuickSort(sorted, 0, uint(length-1), compareValue.object())
+	}
+	return objectValue(sorted)
+}
+
+func builtinArrayWith(call FunctionCall) Value {
+	thisObject := call.thisObject()
+	length := int64(toUint32(thisObject.get(propertyLength)))
+	index := toIntegerFloat(call.Argument(0))
+	if index < 0 {
+		index += float64(length)
+	}
+	if index < 0 || index >= float64(length) {
+		panic(call.runtime.panicRangeError("Invalid index : %v", call.Argument(0)))
+	}
+	call.runtime.allocateDense(length, allocValueCost+allocPropertyCost)
+	values := make([]Value, length)
+	for i := range length {
+		call.runtime.checkInterrupt()
+		if i == int64(index) {
+			values[i] = call.Argument(1)
+		} else {
+			values[i] = thisObject.get(arrayIndexToString(i))
+		}
+	}
+	return objectValue(call.runtime.newArrayOf(values))
+}
+
 func builtinArrayIsArray(call FunctionCall) Value {
 	return boolValue(isArray(call.Argument(0).object()))
 }

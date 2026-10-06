@@ -159,6 +159,7 @@ func TestStringLengthLimitCoverage(t *testing.T) {
 		"error-string": "var s = 'x'.repeat(1 << 20); var e = new Error(s); e.name = s; String(e)",
 		"pad":          "''.padStart(4 << 20, 'x')",
 		"repeat":       "'x'.repeat(4 << 20)",
+		"json-indent":  "var a = 1; for (var i = 0; i < 1000; i++) a = [a]; JSON.stringify(a, null, 10)",
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {
@@ -229,6 +230,7 @@ func TestNativeInterrupt(t *testing.T) {
 		"parse-float":          `var s = "9".repeat(1 << 22); for (;;) parseFloat(s + "x")`,
 		"split":                `var s = "x".repeat(1 << 24); for (;;) s.split("")`,
 		"json-parse":           `var s = "[" + "1,".repeat(1 << 22) + "1]"; for (;;) JSON.parse(s)`,
+		"json-stringify":       `var s = "\n".repeat(1 << 24); for (;;) JSON.stringify([s], null, "-")`,
 		"regexp-backtrack":     `var s = "a".repeat(1 << 22); for (;;) /(a|aa)*(b|c|d)$/.test(s)`,
 		"regexp-match-all":     `var s = "a".repeat(1 << 24); for (;;) s.match(/a/g)`,
 		"regexp-replace":       `var s = "a".repeat(1 << 24); for (;;) s.replace(/a/g, "b")`,

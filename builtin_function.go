@@ -68,10 +68,6 @@ func builtinFunctionApply(call FunctionCall) Value {
 		panic(call.runtime.panicTypeError("Function.apply %q is not callable", call.This))
 	}
 	this := call.Argument(0)
-	if this.IsUndefined() {
-		// FIXME Not ECMA5
-		this = objectValue(call.runtime.globalObject)
-	}
 	argumentList := call.Argument(1)
 	switch argumentList.kind {
 	case valueUndefined, valueNull:
@@ -99,10 +95,6 @@ func builtinFunctionCall(call FunctionCall) Value {
 	}
 	thisObject := call.thisObject()
 	this := call.Argument(0)
-	if this.IsUndefined() {
-		// FIXME Not ECMA5
-		this = objectValue(call.runtime.globalObject)
-	}
 	if len(call.ArgumentList) >= 1 {
 		return thisObject.call(this, call.ArgumentList[1:], false, nativeFrame)
 	}
@@ -118,10 +110,6 @@ func builtinFunctionBind(call FunctionCall) Value {
 
 	this := call.Argument(0)
 	argumentList := call.slice(1)
-	if this.IsUndefined() {
-		// FIXME Do this elsewhere?
-		this = objectValue(call.runtime.globalObject)
-	}
 
 	return objectValue(call.runtime.newBoundFunction(targetObject, this, argumentList))
 }

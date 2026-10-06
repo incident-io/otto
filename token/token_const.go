@@ -79,6 +79,14 @@ const (
 	COLON             // :
 	QUESTION_MARK     // ?
 	ARROW             // =>
+	QUESTION_DOT      // ?.
+	// ES2016+ operators.
+	EXPONENT           // **
+	EXPONENT_ASSIGN    // **=
+	NULLISH            // ??
+	LOGICAL_AND_ASSIGN // &&=
+	LOGICAL_OR_ASSIGN  // ||=
+	NULLISH_ASSIGN     // ??=
 	// Basic flow - keywords below here.
 	_
 	IF
@@ -185,6 +193,13 @@ var token2string = [...]string{
 	COLON:                       ":",
 	QUESTION_MARK:               "?",
 	ARROW:                       "=>",
+	QUESTION_DOT:                "?.",
+	EXPONENT:                    "**",
+	EXPONENT_ASSIGN:             "**=",
+	NULLISH:                     "??",
+	LOGICAL_AND_ASSIGN:          "&&=",
+	LOGICAL_OR_ASSIGN:           "||=",
+	NULLISH_ASSIGN:              "??=",
 	IF:                          "if",
 	IN:                          "in",
 	DO:                          "do",

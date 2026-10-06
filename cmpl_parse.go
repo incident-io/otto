@@ -53,15 +53,17 @@ func (cmpl *compiler) parseExpression(expr ast.Expression) nodeExpression {
 
 	case *ast.BracketExpression:
 		return &nodeBracketExpression{
-			idx:    expr.Left.Idx0(),
-			left:   cmpl.parseExpression(expr.Left),
-			member: cmpl.parseExpression(expr.Member),
+			idx:      expr.Left.Idx0(),
+			left:     cmpl.parseExpression(expr.Left),
+			member:   cmpl.parseExpression(expr.Member),
+			optional: expr.Optional,
 		}
 
 	case *ast.CallExpression:
 		out := &nodeCallExpression{
 			callee:       cmpl.parseExpression(expr.Callee),
 			argumentList: make([]nodeExpression, len(expr.ArgumentList)),
+			optional:     expr.Optional,
 		}
 		for i, value := range expr.ArgumentList {
 			out.argumentList[i] = cmpl.parseExpression(value)
@@ -80,7 +82,11 @@ func (cmpl *compiler) parseExpression(expr ast.Expression) nodeExpression {
 			idx:        expr.Left.Idx0(),
 			left:       cmpl.parseExpression(expr.Left),
 			identifier: expr.Identifier.Name,
+			optional:   expr.Optional,
 		}
+
+	case *ast.OptionalChain:
+		return &nodeOptionalChain{expression: cmpl.parseExpression(expr.Expression)}
 
 	case *ast.EmptyExpression:
 		return nil
@@ -518,8 +524,10 @@ func (cmpl *compiler) parseStatement(stmt ast.Statement) nodeStatement {
 		}
 		if stmt.Catch != nil {
 			out.catch = &nodeCatchStatement{
-				parameter: stmt.Catch.Parameter.Name,
-				body:      cmpl.parseStatement(stmt.Catch.Body),
+				body: cmpl.parseStatement(stmt.Catch.Body),
+			}
+			if stmt.Catch.Parameter != nil {
+				out.catch.parameter = stmt.Catch.Parameter.Name
 			}
 		}
 		return out
@@ -619,14 +627,16 @@ type (
 	}
 
 	nodeBracketExpression struct {
-		left   nodeExpression
-		member nodeExpression
-		idx    file.Idx
+		left     nodeExpression
+		member   nodeExpression
+		idx      file.Idx
+		optional bool
 	}
 
 	nodeCallExpression struct {
 		callee       nodeExpression
 		argumentList []nodeExpression
+		optional     bool
 	}
 
 	nodeConditionalExpression struct {
@@ -639,6 +649,11 @@ type (
 		left       nodeExpression
 		identifier string
 		idx        file.Idx
+		optional   bool
+	}
+
+	nodeOptionalChain struct {
+		expression nodeExpression
 	}
 
 	nodeFunctionLiteral struct {
@@ -887,6 +902,7 @@ func (*nodeIdentifier) expressionNode()            {}
 func (*nodeLiteral) expressionNode()               {}
 func (*nodeNewExpression) expressionNode()         {}
 func (*nodeObjectLiteral) expressionNode()         {}
+func (*nodeOptionalChain) expressionNode()         {}
 func (*nodeRegExpLiteral) expressionNode()         {}
 func (*nodeSequenceExpression) expressionNode()    {}
 func (*nodeSpreadExpression) expressionNode()      {}

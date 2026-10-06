@@ -452,7 +452,7 @@ func TestObjectLiteral(t *testing.T) {
                     return "<>";
                 }
             };
-            [ abc["1e2"], abc.null, abc["[\n]"] ]; 
+            [ abc[100], abc.null, abc["[\n]"] ]; 
         `, "3.14159,true,<>")
 
 		test(`
@@ -467,7 +467,7 @@ func TestObjectLiteral(t *testing.T) {
                     return Math.random();
                 },
             };
-            [ abc["1e2"] = Infinity, abc[3.14159], abc.null = "xyz", abc.def ];
+            [ abc[100] = Infinity, abc[3.14159], abc.null = "xyz", abc.def ];
         `, "Infinity,100,xyz,xyz")
 	})
 }

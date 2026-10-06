@@ -5,11 +5,11 @@ import (
 )
 
 func builtinError(call FunctionCall) Value {
-	return objectValue(call.runtime.newError(classErrorName, call.Argument(0), 1))
+	return objectValue(call.runtime.installErrorCause(call.runtime.newError(classErrorName, call.Argument(0), 1), call.Argument(1)))
 }
 
 func builtinNewError(obj *object, argumentList []Value) Value {
-	return objectValue(obj.runtime.newError(classErrorName, valueOfArrayIndex(argumentList, 0), 0))
+	return objectValue(obj.runtime.installErrorCause(obj.runtime.newError(classErrorName, valueOfArrayIndex(argumentList, 0), 0), valueOfArrayIndex(argumentList, 1)))
 }
 
 func builtinErrorToString(call FunctionCall) Value {
@@ -49,11 +49,11 @@ func (rt *runtime) newEvalError(message Value) *object {
 }
 
 func builtinEvalError(call FunctionCall) Value {
-	return objectValue(call.runtime.newEvalError(call.Argument(0)))
+	return objectValue(call.runtime.installErrorCause(call.runtime.newEvalError(call.Argument(0)), call.Argument(1)))
 }
 
 func builtinNewEvalError(obj *object, argumentList []Value) Value {
-	return objectValue(obj.runtime.newEvalError(valueOfArrayIndex(argumentList, 0)))
+	return objectValue(obj.runtime.installErrorCause(obj.runtime.newEvalError(valueOfArrayIndex(argumentList, 0)), valueOfArrayIndex(argumentList, 1)))
 }
 
 func (rt *runtime) newTypeError(message Value) *object {
@@ -63,11 +63,11 @@ func (rt *runtime) newTypeError(message Value) *object {
 }
 
 func builtinTypeError(call FunctionCall) Value {
-	return objectValue(call.runtime.newTypeError(call.Argument(0)))
+	return objectValue(call.runtime.installErrorCause(call.runtime.newTypeError(call.Argument(0)), call.Argument(1)))
 }
 
 func builtinNewTypeError(obj *object, argumentList []Value) Value {
-	return objectValue(obj.runtime.newTypeError(valueOfArrayIndex(argumentList, 0)))
+	return objectValue(obj.runtime.installErrorCause(obj.runtime.newTypeError(valueOfArrayIndex(argumentList, 0)), valueOfArrayIndex(argumentList, 1)))
 }
 
 func (rt *runtime) newRangeError(message Value) *object {
@@ -77,11 +77,11 @@ func (rt *runtime) newRangeError(message Value) *object {
 }
 
 func builtinRangeError(call FunctionCall) Value {
-	return objectValue(call.runtime.newRangeError(call.Argument(0)))
+	return objectValue(call.runtime.installErrorCause(call.runtime.newRangeError(call.Argument(0)), call.Argument(1)))
 }
 
 func builtinNewRangeError(obj *object, argumentList []Value) Value {
-	return objectValue(obj.runtime.newRangeError(valueOfArrayIndex(argumentList, 0)))
+	return objectValue(obj.runtime.installErrorCause(obj.runtime.newRangeError(valueOfArrayIndex(argumentList, 0)), valueOfArrayIndex(argumentList, 1)))
 }
 
 func (rt *runtime) newURIError(message Value) *object {
@@ -97,11 +97,11 @@ func (rt *runtime) newReferenceError(message Value) *object {
 }
 
 func builtinReferenceError(call FunctionCall) Value {
-	return objectValue(call.runtime.newReferenceError(call.Argument(0)))
+	return objectValue(call.runtime.installErrorCause(call.runtime.newReferenceError(call.Argument(0)), call.Argument(1)))
 }
 
 func builtinNewReferenceError(obj *object, argumentList []Value) Value {
-	return objectValue(obj.runtime.newReferenceError(valueOfArrayIndex(argumentList, 0)))
+	return objectValue(obj.runtime.installErrorCause(obj.runtime.newReferenceError(valueOfArrayIndex(argumentList, 0)), valueOfArrayIndex(argumentList, 1)))
 }
 
 func (rt *runtime) newSyntaxError(message Value) *object {
@@ -111,17 +111,25 @@ func (rt *runtime) newSyntaxError(message Value) *object {
 }
 
 func builtinSyntaxError(call FunctionCall) Value {
-	return objectValue(call.runtime.newSyntaxError(call.Argument(0)))
+	return objectValue(call.runtime.installErrorCause(call.runtime.newSyntaxError(call.Argument(0)), call.Argument(1)))
 }
 
 func builtinNewSyntaxError(obj *object, argumentList []Value) Value {
-	return objectValue(obj.runtime.newSyntaxError(valueOfArrayIndex(argumentList, 0)))
+	return objectValue(obj.runtime.installErrorCause(obj.runtime.newSyntaxError(valueOfArrayIndex(argumentList, 0)), valueOfArrayIndex(argumentList, 1)))
 }
 
 func builtinURIError(call FunctionCall) Value {
-	return objectValue(call.runtime.newURIError(call.Argument(0)))
+	return objectValue(call.runtime.installErrorCause(call.runtime.newURIError(call.Argument(0)), call.Argument(1)))
 }
 
 func builtinNewURIError(obj *object, argumentList []Value) Value {
-	return objectValue(obj.runtime.newURIError(valueOfArrayIndex(argumentList, 0)))
+	return objectValue(obj.runtime.installErrorCause(obj.runtime.newURIError(valueOfArrayIndex(argumentList, 0)), valueOfArrayIndex(argumentList, 1)))
+}
+
+// installErrorCause implements InstallErrorCause.
+func (rt *runtime) installErrorCause(obj *object, options Value) *object {
+	if options := options.object(); options != nil && options.hasProperty("cause") {
+		obj.defineProperty("cause", options.get("cause"), 0o101, false)
+	}
+	return obj
 }

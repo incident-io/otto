@@ -80,7 +80,7 @@ func TestGlobal(t *testing.T) {
 
 		test(`
             Object.getOwnPropertyNames(Function('return this')()).sort();
-        `, "Array,Boolean,Date,Error,EvalError,Function,Infinity,JSON,Math,NaN,Number,Object,RangeError,ReferenceError,RegExp,String,SyntaxError,TypeError,URIError,console,decodeURI,decodeURIComponent,encodeURI,encodeURIComponent,escape,eval,isFinite,isNaN,parseFloat,parseInt,undefined,unescape")
+        `, "Array,Boolean,Date,Error,EvalError,Function,Infinity,JSON,Math,NaN,Number,Object,RangeError,ReferenceError,RegExp,String,SyntaxError,TypeError,URIError,console,decodeURI,decodeURIComponent,encodeURI,encodeURIComponent,escape,eval,globalThis,isFinite,isNaN,parseFloat,parseInt,undefined,unescape")
 
 		// __defineGetter__,__defineSetter__,__lookupGetter__,__lookupSetter__,constructor,hasOwnProperty,isPrototypeOf,propertyIsEnumerable,toLocaleString,toString,valueOf
 		test(`
