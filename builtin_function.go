@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/robertkrimen/otto/parser"
+	"github.com/incident-io/otto/parser"
 )
 
 // Function
