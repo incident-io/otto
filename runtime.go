@@ -73,7 +73,11 @@ type runtime struct {
 	unwinding    bool // an interrupt or resource limit panic is unwinding the stack
 	boxedString  string
 	boxedValue   stringObjecter
-	lck          sync.Mutex
+	appendState  appendState
+
+	// regExpPrograms holds up to maxRegExpPrograms compiled patterns.
+	regExpPrograms map[string]*regExpProgram
+	lck            sync.Mutex
 }
 
 func (rt *runtime) checkStringLength(length int) {
@@ -131,6 +135,23 @@ func (rt *runtime) enterFunctionScope(outer stasher, this Value) *fnStash {
 	}
 	rt.enterScope(newScope(stash, stash, thisObject))
 	return stash
+}
+
+// enterNativeScope enters the scope of a call to a native function. Native
+// functions read this from their FunctionCall, so a primitive this is boxed
+// only if Context asks for it.
+func (rt *runtime) enterNativeScope(this Value) {
+	stash := rt.newFunctionStash(rt.scope.lexical)
+	sc := newScope(stash, stash, nil)
+	switch this.kind {
+	case valueBoolean, valueNumber, valueString:
+		sc.primitiveThis = this
+	case valueUndefined, valueNull:
+		sc.this = rt.globalObject
+	default:
+		sc.this = rt.toObject(this)
+	}
+	rt.enterScope(sc)
 }
 
 func (rt *runtime) putValue(reference referencer, value Value) {

@@ -6,9 +6,12 @@ type scope struct {
 	variable stasher
 	this     *object
 	outer    *scope
-	frame    frame
-	depth    int
-	eval     bool
+
+	// primitiveThis is this, unboxed, when this is nil.
+	primitiveThis Value
+	frame         frame
+	depth         int
+	eval          bool
 }
 
 func newScope(lexical stasher, variable stasher, this *object) *scope {

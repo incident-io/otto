@@ -529,7 +529,11 @@ func (o Otto) ContextSkip(limit int, skipNative bool) Context {
 	}
 
 	// Get the current scope this Value
-	ctx.This = objectValue(curScope.this)
+	if curScope.this != nil {
+		ctx.This = objectValue(curScope.this)
+	} else {
+		ctx.This = objectValue(o.runtime.toObject(curScope.primitiveThis))
+	}
 
 	// Build stacktrace (up to 10 levels deep)
 	ctx.Symbols = make(map[string]Value)

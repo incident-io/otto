@@ -68,9 +68,7 @@ func (rt *runtime) calculateBinaryExpression(operator token.Token, left Value, r
 		rightValue = toPrimitiveValue(rightValue)
 
 		if leftValue.IsString() || rightValue.IsString() {
-			leftString, rightString := leftValue.string(), rightValue.string()
-			rt.allocateString(len(leftString) + len(rightString))
-			return stringValue(leftString + rightString)
+			return stringValue(rt.concatStrings(leftValue.string(), rightValue.string()))
 		}
 		return float64Value(leftValue.float64() + rightValue.float64())
 	case token.MINUS:

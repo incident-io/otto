@@ -62,17 +62,18 @@ func (rt *runtime) cmplCallNodeFunction(function *object, stash *fnStash, node *
 	}
 
 	if !node.isArrow && !argumentsFound {
-		arguments := rt.newArgumentsObject(indexOfParameterName, stash, len(argumentList))
-		arguments.defineProperty("callee", objectValue(function), 0o101, false)
-		stash.arguments = arguments
-		// strict = false
-		rt.scope.lexical.setValue("arguments", objectValue(arguments), false)
-		for index := range argumentList {
-			if index < len(node.parameterList) {
-				continue
+		stash.setValue("arguments", Value{}, false)
+		stash.newArguments = func() *object {
+			arguments := rt.newArgumentsObject(indexOfParameterName, stash, len(argumentList))
+			arguments.defineProperty("callee", objectValue(function), 0o101, false)
+			for index := range argumentList {
+				if index < len(node.parameterList) {
+					continue
+				}
+				indexAsString := strconv.FormatInt(int64(index), 10)
+				arguments.defineProperty(indexAsString, argumentList[index], 0o111, false)
 			}
-			indexAsString := strconv.FormatInt(int64(index), 10)
-			arguments.defineProperty(indexAsString, argumentList[index], 0o111, false)
+			return arguments
 		}
 	}
 

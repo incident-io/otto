@@ -248,6 +248,47 @@ type fnStash struct {
 	dclStash
 	arguments           *object
 	indexOfArgumentName map[string]string
+
+	// newArguments creates the arguments object, which most functions never
+	// read, the first time arguments is read.
+	newArguments func() *object
+}
+
+func (s *fnStash) createArguments(name string) {
+	if name != "arguments" || s.newArguments == nil {
+		return
+	}
+	newArguments := s.newArguments
+	s.newArguments = nil
+	s.arguments = newArguments()
+	s.dclStash.setBinding(name, objectValue(s.arguments), false)
+}
+
+func (s *fnStash) getBinding(name string, throw bool) Value {
+	s.createArguments(name)
+	return s.dclStash.getBinding(name, throw)
+}
+
+func (s *fnStash) setBinding(name string, value Value, strict bool) {
+	if name == "arguments" {
+		s.newArguments = nil
+	}
+	s.dclStash.setBinding(name, value, strict)
+}
+
+func (s *fnStash) setValue(name string, value Value, throw bool) {
+	if !s.hasBinding(name) {
+		s.createBinding(name, false, value)
+	} else {
+		s.setBinding(name, value, throw)
+	}
+}
+
+func (s *fnStash) newReference(name string, _ bool, _ at) referencer {
+	return &stashReference{
+		name: name,
+		base: s,
+	}
 }
 
 func (rt *runtime) newFunctionStash(outer stasher) *fnStash {
@@ -265,6 +306,7 @@ func (s *fnStash) clone(c *cloner) stasher {
 	if exists {
 		return out
 	}
+	s.createArguments("arguments")
 	dclStash := s.dclStash.clone(c).(*dclStash)
 	index := make(map[string]string, len(s.indexOfArgumentName))
 	for name, value := range s.indexOfArgumentName {
