@@ -56,6 +56,18 @@ func TestStringAppendLimits(t *testing.T) {
 	require.Equal(t, "1000000", v.String())
 	require.Less(t, vm.ResourceUsage().AllocatedBytes, int64(8<<20))
 
+	vm = New()
+	vm.SetAllocationLimit(64 << 20)
+	v, err = vm.Run(`
+		var s = "", row = "x".repeat(1000);
+		for (var i = 0; i < 1000; i++) s += "| " + row + " |\n";
+		s.length
+	`)
+	require.NoError(t, err)
+	require.Equal(t, "1005000", v.String())
+	require.Less(t, vm.ResourceUsage().AllocatedBytes, int64(16<<20))
+
+	vm.SetStringLengthLimit(1 << 20)
 	_, err = vm.Run(`for (;;) s += "0123456789"`)
 	require.EqualError(t, err, "RangeError: Invalid string length")
 	require.Greater(t, vm.ResourceUsage().MaxStringBytes, 1<<20)
