@@ -280,7 +280,9 @@ func (rt *runtime) bracketMember(node *nodeBracketExpression, targetValue Value)
 	member := rt.cmplEvaluateNodeExpression(node.member)
 	memberValue := member.resolve()
 
-	// TODO Pass in base value as-is, and defer toObject till later?
+	if targetValue.kind == valueString {
+		return toValue(&stringReference{runtime: rt, base: targetValue, name: memberValue.string(), at: at(node.idx)})
+	}
 	obj, err := rt.objectCoerce(targetValue)
 	if err != nil {
 		panic(rt.panicTypeError("Cannot access member %q of %s", memberValue.string(), err, at(node.idx)))
@@ -326,6 +328,9 @@ func (rt *runtime) callNode(node *nodeCallExpression, callee, fn Value, withArgu
 			name = rf.name
 			this = objectValue(rf.base)
 			eval = rf.name == functionEval && !node.optional // Possible direct eval
+		case *stringReference:
+			name = rf.name
+			this = rf.this(fn)
 		case *stashReference:
 			// TODO ImplicitThisValue
 			name = rf.name
@@ -449,8 +454,11 @@ func (rt *runtime) cmplEvaluateNodeTaggedTemplate(node *nodeTaggedTemplate) Valu
 
 	// A tag of the form obj.fn`...` is called with `this` = obj.
 	this := Value{}
-	if rf, ok := tag.reference().(*propertyReference); ok && rf != nil {
+	switch rf := tag.reference().(type) {
+	case *propertyReference:
 		this = objectValue(rf.base)
+	case *stringReference:
+		this = objectValue(rf.object())
 	}
 
 	fn := tag.resolve()
@@ -488,7 +496,9 @@ func (rt *runtime) cmplEvaluateNodeDotExpression(node *nodeDotExpression) Value 
 
 // dotMember returns a reference to node's named property of targetValue.
 func (rt *runtime) dotMember(node *nodeDotExpression, targetValue Value) Value {
-	// TODO Pass in base value as-is, and defer toObject till later?
+	if targetValue.kind == valueString {
+		return toValue(&stringReference{runtime: rt, base: targetValue, name: node.identifier, at: at(node.idx)})
+	}
 	obj, err := rt.objectCoerce(targetValue)
 	if err != nil {
 		panic(rt.panicTypeError("Cannot access member %q of %s", node.identifier, err, at(node.idx)))
@@ -504,6 +514,8 @@ func (rt *runtime) cmplEvaluateNodeNewExpression(node *nodeNewExpression) Value 
 	if rf := callee.reference(); rf != nil {
 		switch rf := rf.(type) {
 		case *propertyReference:
+			name = rf.name
+		case *stringReference:
 			name = rf.name
 		case *stashReference:
 			name = rf.name

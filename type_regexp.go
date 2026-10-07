@@ -68,14 +68,8 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 		re2pattern = fmt.Sprintf("(?%s:%s)", re2flags, re2pattern)
 	}
 
-	size, contextFree := rt.checkRegExpSize(re2pattern)
-	regularExpression, err := regexp.Compile(re2pattern)
-	if err != nil {
-		panic(rt.panicSyntaxError("Invalid regular expression: %s", err.Error()[22:]))
-	}
-
 	o.value = regExpObject{
-		program:    &regExpProgram{re: regularExpression, size: size, contextFree: contextFree},
+		program:    rt.regExpProgram(re2pattern),
 		global:     global,
 		ignoreCase: ignoreCase,
 		multiline:  multiline,
@@ -96,6 +90,26 @@ func (rt *runtime) newRegExpObject(pattern string, flags string) *object {
 	o.defineProperty("lastIndex", intValue(0), 0o100, false)
 	o.defineProperty("source", stringValue(pattern), 0, false)
 	return o
+}
+
+// regExpProgram compiles pattern, reusing the program compiled for an earlier
+// RegExp with the same pattern, as a regular expression literal in a loop or
+// a function creates a RegExp every time it is evaluated.
+func (rt *runtime) regExpProgram(pattern string) *regExpProgram {
+	if program, ok := rt.regExpPrograms[pattern]; ok {
+		return program
+	}
+	size, contextFree := rt.checkRegExpSize(pattern)
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		panic(rt.panicSyntaxError("Invalid regular expression: %s", err.Error()[22:]))
+	}
+	program := &regExpProgram{re: re, size: size, contextFree: contextFree}
+	if rt.regExpPrograms == nil || len(rt.regExpPrograms) >= maxRegExpPrograms {
+		rt.regExpPrograms = make(map[string]*regExpProgram)
+	}
+	rt.regExpPrograms[pattern] = program
+	return program
 }
 
 func (o *object) regExpValue() regExpObject {

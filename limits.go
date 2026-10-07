@@ -160,6 +160,9 @@ func (rt *runtime) mapString(s string, mapping func(rune) rune) string {
 // work done per character when matching it.
 const maxRegExpSize = 1 << 16
 
+// maxRegExpPrograms is how many compiled patterns a runtime keeps for reuse.
+const maxRegExpPrograms = 64
+
 // checkRegExpSize throws a SyntaxError if pattern, in Go syntax, would
 // compile to more than maxRegExpSize instructions, and otherwise returns the
 // estimated number of instructions and whether the pattern is context-free
