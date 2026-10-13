@@ -1,31 +1,12 @@
 &object{
     runtime:     rt,
     class:       classFunctionName,
-    objectClass: classObject,
+    objectClass: classLazyNativeFunction,
     prototype:   rt.global.FunctionPrototype,
     extensible:  true,
-    property: map[string]property{
-        propertyLength: {
-            mode: 0,
-            value: Value{
-                kind:  valueNumber,
-                value: {{if eq .Property.Function -1}}0{{else}}{{.Property.Function}}{{end}},
-            },
-        },
-        propertyName: {
-            mode: 0,
-            value: Value{
-                kind:  valueString,
-                value: "{{.Property.Name}}",
-            },
-        },
-    },
-    propertyOrder: []string{
-        propertyLength,
-        propertyName,
-    },
     value: nativeFunctionObject{
-        name: {{template "name.tmpl" .Property.Name}},
-        call: builtin{{if .Property.Call}}{{.Property.Call}}{{else}}{{.Name}}{{.Property.Name | ucfirst}}{{end}},
+        name:   {{template "name.tmpl" .Property.Name}},
+        call:   builtin{{if .Property.Call}}{{.Property.Call}}{{else}}{{.Name}}{{.Property.Name | ucfirst}}{{end}},
+        length: {{if eq .Property.Function -1}}0{{else}}{{.Property.Function}}{{end}},
     },
 }{{/* No newline. */ -}}

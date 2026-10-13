@@ -32,6 +32,57 @@ type nativeFunctionObject struct {
 	name      string
 	file      string
 	line      int
+	length    int
+}
+
+// classLazyNativeFunction is the class of the builtin functions newContext creates. Their
+// length and name properties are only built once something touches the function's own
+// properties, because most scripts just call a few builtins and every VM creates them all.
+var classLazyNativeFunction = &objectClass{
+	getOwnProperty: func(o *object, name string) *property {
+		return o.materializeNativeFunction().getOwnProperty(o, name)
+	},
+	getProperty: func(o *object, name string) *property {
+		return o.materializeNativeFunction().getProperty(o, name)
+	},
+	get: func(o *object, name string) Value {
+		return o.materializeNativeFunction().get(o, name)
+	},
+	canPut: func(o *object, name string) bool {
+		return o.materializeNativeFunction().canPut(o, name)
+	},
+	put: func(o *object, name string, value Value, throw bool) {
+		o.materializeNativeFunction().put(o, name, value, throw)
+	},
+	hasProperty: func(o *object, name string) bool {
+		return o.materializeNativeFunction().hasProperty(o, name)
+	},
+	hasOwnProperty: func(o *object, name string) bool {
+		return o.materializeNativeFunction().hasOwnProperty(o, name)
+	},
+	defineOwnProperty: func(o *object, name string, descriptor property, throw bool) bool {
+		return o.materializeNativeFunction().defineOwnProperty(o, name, descriptor, throw)
+	},
+	delete: func(o *object, name string, throw bool) bool {
+		return o.materializeNativeFunction().delete(o, name, throw)
+	},
+	enumerate: func(o *object, all bool, each func(string) bool) {
+		o.materializeNativeFunction().enumerate(o, all, each)
+	},
+	clone: objectClone,
+}
+
+// materializeNativeFunction gives a builtin function its length and name properties and
+// makes it an ordinary object, returning its new class.
+func (o *object) materializeNativeFunction() *objectClass {
+	fn := o.value.(nativeFunctionObject)
+	o.objectClass = classObject
+	o.property = map[string]property{
+		propertyLength: {value: intValue(fn.length)},
+		propertyName:   {value: stringValue(fn.name)},
+	}
+	o.propertyOrder = []string{propertyLength, propertyName}
+	return o.objectClass
 }
 
 func (rt *runtime) newNativeFunctionProperty(name, file string, line int, native nativeFunction, length int) *object {
