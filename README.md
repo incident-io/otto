@@ -1,6 +1,6 @@
 # otto
 
-[![GoDoc Reference](https://pkg.go.dev/badge/github.com/robertkrimen/otto.svg)](https://pkg.go.dev/github.com/robertkrimen/otto)
+[![GoDoc Reference](https://pkg.go.dev/badge/github.com/incident-io/otto.svg)](https://pkg.go.dev/github.com/incident-io/otto)
 
 ## Basic Usage
 
@@ -10,7 +10,7 @@ To use import it with the following:
 
 ```go
 import (
-   "github.com/robertkrimen/otto"
+   "github.com/incident-io/otto"
 )
 ```
 
@@ -113,7 +113,7 @@ result, _ = vm.Run(`
 A separate parser is available in the parser package if you're interested
 in only building an AST.
 
-[![GoDoc Reference](https://pkg.go.dev/badge/github.com/robertkrimen/otto/parser.svg)](https://pkg.go.dev/github.com/robertkrimen/otto/parser)
+[![GoDoc Reference](https://pkg.go.dev/badge/github.com/incident-io/otto/parser.svg)](https://pkg.go.dev/github.com/incident-io/otto/parser)
 
 Parse and return an AST
 
@@ -140,10 +140,10 @@ program, err := parser.ParseFile(nil, filename, src, 0)
 ## Setup
 
 You can run (Go) JavaScript from the command line with
-[otto](http://github.com/robertkrimen/otto/tree/master/otto).
+[otto](http://github.com/incident-io/otto/tree/master/otto).
 
 ```shell
-go install github.com/robertkrimen/otto/otto@latest
+go install github.com/incident-io/otto/otto@latest
 ```
 
 Run JavaScript by entering some source on stdin or by giving otto a filename:
@@ -159,14 +159,14 @@ import:
 
 ```go
 import (
-    "github.com/robertkrimen/otto"
-    _ "github.com/robertkrimen/otto/underscore"
+    "github.com/incident-io/otto"
+    _ "github.com/incident-io/otto/underscore"
 )
 
 // Now every otto runtime will be initialized with Underscore.
 ```
 
-For more information: [underscore](http://github.com/robertkrimen/otto/tree/master/underscore)
+For more information: [underscore](http://github.com/incident-io/otto/tree/master/underscore)
 
 ## Caveat Emptor
 
@@ -213,7 +213,7 @@ import (
     "os"
     "time"
 
-    "github.com/robertkrimen/otto"
+    "github.com/incident-io/otto"
 )
 
 var halt = errors.New("Stahp")
