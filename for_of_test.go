@@ -126,6 +126,27 @@ func TestForOfControlFlow(t *testing.T) {
             }
             out.join(",");
         `, "1,3")
+
+		test(`
+            var n = 0;
+            outer: for (var x of [1, 2, 3]) {
+                n++;
+                continue outer;
+            }
+            n;
+        `, 3)
+
+		test(`
+            var out = [];
+            outer: for (const x of [1, 2, 3]) {
+                for (const y of [1, 2, 3]) {
+                    if (y === 2) continue outer;
+                    if (x === 3) break outer;
+                    out.push(x + ":" + y);
+                }
+            }
+            out.join(",");
+        `, "1:1,2:1")
 	})
 }
 
@@ -139,5 +160,28 @@ func TestForOfPerIteration(t *testing.T) {
             for (let x of [1, 2, 3]) fns.push(function() { return x; });
             [fns[0](), fns[1](), fns[2]()].join(",");
         `, "1,2,3")
+	})
+}
+
+func TestForOfLabelledControlFlow(t *testing.T) {
+	tt(t, func() {
+		test, _ := test()
+
+		for _, tc := range []struct{ src, want string }{
+			{`var n = 0; L: for (const [a] of [[1], [2], [3]]) { n += a; continue L; } String(n);`, "6"},
+			{`var x, out = []; L: for (x of [1, 2, 3]) { if (x === 2) break L; out.push(x); } out.join(",") + ":" + x;`, "1:2"},
+			{`var out = ""; L: for (const c of "abc") { if (c === "b") continue L; out += c; } out;`, "ac"},
+			{`var out = []; L: M: for (const x of [1, 2, 3]) { if (x === 1) continue L; if (x === 3) continue M; out.push(x); } out.join(",");`, "2"},
+			{`var out = []; L: for (const x of [1, 2, 3, 4]) { switch (x) { case 1: continue L; case 3: break L; default: out.push(x); } } out.join(",");`, "2"},
+			{`var f = 0, out = []; L: for (const x of [1, 2, 3]) { try { if (x === 2) continue L; out.push(x); } finally { f++; } } out.join(",") + ":" + f;`, "1,3:3"},
+			{`var out = []; L: for (const x of [1, 2, 3]) { B: { if (x === 2) break B; out.push(x); } out.push("-"); } out.join("");`, "1--3-"},
+			{`function g() { L: for (const x of [1, 2, 3]) { for (const y of [1, 2]) { if (x === 2) return x + ":" + y; } } return "none"; } g();`, "2:1"},
+			{`var out = []; L: for (const x of [1, 2, 3]) { var w = 0; while (w++ < 3) { if (w === 2) continue L; out.push(x + "" + w); } } out.join(",");`, "11,21,31"},
+			{`var out = []; L: for (const x of [1, 2, 3]) { for (var k in {a: 1, b: 2}) { if (x === 2) break L; out.push(x + k); } } out.join(",");`, "1a,1b"},
+			{`var fs = []; L: for (let x of [1, 2, 3]) { fs.push(function () { return x; }); if (x < 3) continue L; } fs.map(function (f) { return f(); }).join(",");`, "1,2,3"},
+			{`let x = "outer"; L: for (let x of [1, 2]) { if (x === 1) continue L; break L; } x;`, "outer"},
+		} {
+			test(tc.src, tc.want)
+		}
 	})
 }
