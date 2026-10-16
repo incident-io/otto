@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/robertkrimen/otto/token"
+	"github.com/incident-io/otto/token"
 )
 
 func (rt *runtime) evaluateMultiply(left float64, right float64) Value { //nolint:unused
