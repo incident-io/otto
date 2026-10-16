@@ -26,3 +26,24 @@ func newContinueResult(target string) result {
 func newBreakResult(target string) result {
 	return result{kind: resultBreak, value: emptyValue, target: target}
 }
+
+// updateEmpty is ES2015's UpdateEmpty: it gives an empty completion, or a break
+// or continue with no value yet, the given value.
+func updateEmpty(completion, value Value) Value {
+	switch completion.kind {
+	case valueEmpty:
+		return value
+	case valueResult:
+		r := completion.value.(result)
+		if r.kind != resultReturn && r.value.isEmpty() {
+			r.value = value
+			return toValue(r)
+		}
+	}
+	return completion
+}
+
+// resultValue returns the value carried by a return, break or continue.
+func (v Value) resultValue() Value {
+	return v.value.(result).value
+}

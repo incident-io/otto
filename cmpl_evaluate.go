@@ -16,7 +16,11 @@ func (rt *runtime) cmplEvaluateNodeProgram(node *nodeProgram, eval bool) Value {
 		restore := rt.enterLexicalScope()
 		defer restore()
 	}
-	return rt.cmplEvaluateNodeStatementList(node.body)
+	result := rt.cmplEvaluateNodeStatementList(node.body)
+	if result.isEmpty() {
+		return Value{}
+	}
+	return result
 }
 
 func (rt *runtime) cmplCallNodeFunction(function *object, stash *fnStash, node *nodeFunctionLiteral, argumentList []Value) Value {

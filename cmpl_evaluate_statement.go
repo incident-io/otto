@@ -115,12 +115,12 @@ func (rt *runtime) cmplEvaluateNodeStatementInner(node nodeStatement) Value {
 }
 
 func (rt *runtime) cmplEvaluateNodeStatementList(list []nodeStatement) Value {
-	var result Value
+	result := emptyValue
 	for _, node := range list {
 		value := rt.cmplEvaluateNodeStatement(node)
 		switch value.kind {
 		case valueResult:
-			return value
+			return updateEmpty(value, result)
 		case valueEmpty:
 		default:
 			// We have getValue here to (for example) trigger a
@@ -140,13 +140,15 @@ func (rt *runtime) cmplEvaluateNodeDoWhileStatement(node *nodeDoWhileStatement) 
 
 	test := node.test
 
-	result := emptyValue
+	result := Value{}
 resultBreak:
 	for {
 		for _, node := range node.body {
 			value := rt.cmplEvaluateNodeStatement(node)
 			switch value.kind {
 			case valueResult:
+				value = updateEmpty(value, result)
+				result = value.resultValue()
 				switch value.evaluateBreakContinue(labels) {
 				case resultReturn:
 					return value
@@ -279,7 +281,7 @@ func (rt *runtime) cmplEvaluateNodeBlockStatement(node *nodeBlockStatement) Valu
 	value := rt.cmplEvaluateNodeStatementList(node.list)
 	if value.kind == valueResult {
 		if value.evaluateBreak(labels) == resultBreak {
-			return emptyValue
+			return value.resultValue()
 		}
 	}
 	return value
@@ -350,7 +352,7 @@ func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Valu
 
 	switch sourceValue.kind {
 	case valueUndefined, valueNull:
-		return emptyValue
+		return Value{}
 	}
 
 	sourceObject := rt.toObject(sourceValue)
@@ -367,10 +369,10 @@ func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Valu
 		defer func() { rt.scope.lexical = outerLexical }()
 	}
 
-	result := emptyValue
+	result := Value{}
+	var returned Value
 	obj := sourceObject
 	for obj != nil {
-		enumerateValue := emptyValue
 		obj.enumerate(false, func(name string) bool {
 			if lexical {
 				rt.scope.lexical = rt.newDeclarationStash(outerLexical)
@@ -380,9 +382,12 @@ func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Valu
 				value := rt.cmplEvaluateNodeStatement(node)
 				switch value.kind {
 				case valueResult:
+					value = updateEmpty(value, result)
+					result = value.resultValue()
 					switch value.evaluateBreakContinue(labels) {
 					case resultReturn:
-						enumerateValue = value
+						returned = value
+						obj = nil
 						return false
 					case resultBreak:
 						obj = nil
@@ -392,7 +397,7 @@ func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Valu
 					}
 				case valueEmpty:
 				default:
-					enumerateValue = value
+					result = value
 				}
 			}
 			return true
@@ -401,9 +406,9 @@ func (rt *runtime) cmplEvaluateNodeForInStatement(node *nodeForInStatement) Valu
 			break
 		}
 		obj = obj.prototype
-		if !enumerateValue.isEmpty() {
-			result = enumerateValue
-		}
+	}
+	if returned.kind == valueResult {
+		return returned
 	}
 	return result
 }
@@ -474,7 +479,7 @@ func (rt *runtime) cmplEvaluateNodeForOfStatement(node *nodeForInStatement) Valu
 		defer func() { rt.scope.lexical = outerLexical }()
 	}
 
-	result := emptyValue
+	result := Value{}
 forLoop:
 	for _, iterationValue := range values {
 		if lexical {
@@ -487,6 +492,8 @@ forLoop:
 			value := rt.cmplEvaluateNodeStatement(n)
 			switch value.kind {
 			case valueResult:
+				value = updateEmpty(value, result)
+				result = value.resultValue()
 				switch value.evaluateBreakContinue(labels) {
 				case resultReturn:
 					return value
@@ -543,7 +550,7 @@ func (rt *runtime) cmplEvaluateNodeForStatement(node *nodeForStatement) Value {
 
 	createPerIteration() // CreatePerIterationEnvironment, before the first test
 
-	result := emptyValue
+	result := Value{}
 resultBreak:
 	for {
 		if test != nil {
@@ -564,6 +571,8 @@ resultBreak:
 			value := rt.cmplEvaluateNodeStatement(node)
 			switch value.kind {
 			case valueResult:
+				value = updateEmpty(value, result)
+				result = value.resultValue()
 				switch value.evaluateBreakContinue(labels) {
 				case resultReturn:
 					return value
@@ -591,12 +600,12 @@ func (rt *runtime) cmplEvaluateNodeIfStatement(node *nodeIfStatement) Value {
 	test := rt.cmplEvaluateNodeExpression(node.test)
 	testValue := test.resolve()
 	if testValue.bool() {
-		return rt.cmplEvaluateNodeStatement(node.consequent)
+		return updateEmpty(rt.cmplEvaluateNodeStatement(node.consequent), Value{})
 	} else if node.alternate != nil {
-		return rt.cmplEvaluateNodeStatement(node.alternate)
+		return updateEmpty(rt.cmplEvaluateNodeStatement(node.alternate), Value{})
 	}
 
-	return emptyValue
+	return Value{}
 }
 
 func (rt *runtime) cmplEvaluateNodeSwitchStatement(node *nodeSwitchStatement) Value {
@@ -616,18 +625,19 @@ func (rt *runtime) cmplEvaluateNodeSwitchStatement(node *nodeSwitchStatement) Va
 		}
 	}
 
-	result := emptyValue
+	result := Value{}
 	if target != -1 {
 		for _, clause := range node.body[target:] {
 			for _, statement := range clause.consequent {
 				value := rt.cmplEvaluateNodeStatement(statement)
 				switch value.kind {
 				case valueResult:
+					value = updateEmpty(value, result)
 					switch value.evaluateBreak(labels) {
 					case resultReturn:
 						return value
 					case resultBreak:
-						return result
+						return value.resultValue()
 					}
 				case valueEmpty:
 				default:
@@ -668,7 +678,7 @@ func (rt *runtime) cmplEvaluateNodeTryStatement(node *nodeTryStatement) Value {
 	if node.finally != nil {
 		finallyValue := rt.cmplEvaluateNodeStatement(node.finally)
 		if finallyValue.kind == valueResult {
-			return finallyValue
+			return updateEmpty(finallyValue, Value{})
 		}
 	}
 
@@ -676,7 +686,7 @@ func (rt *runtime) cmplEvaluateNodeTryStatement(node *nodeTryStatement) Value {
 		panic(newException(tryCatchValue))
 	}
 
-	return tryCatchValue
+	return updateEmpty(tryCatchValue, Value{})
 }
 
 func (rt *runtime) cmplEvaluateModeWhileStatement(node *nodeWhileStatement) Value {
@@ -685,7 +695,7 @@ func (rt *runtime) cmplEvaluateModeWhileStatement(node *nodeWhileStatement) Valu
 	labels := append(rt.labels, "") //nolint:gocritic
 	rt.labels = nil
 
-	result := emptyValue
+	result := Value{}
 resultBreakContinue:
 	for {
 		if !rt.cmplEvaluateNodeExpression(test).resolve().bool() {
@@ -696,6 +706,8 @@ resultBreakContinue:
 			value := rt.cmplEvaluateNodeStatement(node)
 			switch value.kind {
 			case valueResult:
+				value = updateEmpty(value, result)
+				result = value.resultValue()
 				switch value.evaluateBreakContinue(labels) {
 				case resultReturn:
 					return value
@@ -722,5 +734,5 @@ func (rt *runtime) cmplEvaluateNodeWithStatement(node *nodeWithStatement) Value 
 		rt.scope.lexical = outer
 	}()
 
-	return rt.cmplEvaluateNodeStatement(node.body)
+	return updateEmpty(rt.cmplEvaluateNodeStatement(node.body), Value{})
 }
