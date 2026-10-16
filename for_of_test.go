@@ -126,6 +126,27 @@ func TestForOfControlFlow(t *testing.T) {
             }
             out.join(",");
         `, "1,3")
+
+		test(`
+            var n = 0;
+            outer: for (var x of [1, 2, 3]) {
+                n++;
+                continue outer;
+            }
+            n;
+        `, 3)
+
+		test(`
+            var out = [];
+            outer: for (const x of [1, 2, 3]) {
+                for (const y of [1, 2, 3]) {
+                    if (y === 2) continue outer;
+                    if (x === 3) break outer;
+                    out.push(x + ":" + y);
+                }
+            }
+            out.join(",");
+        `, "1:1,2:1")
 	})
 }
 
